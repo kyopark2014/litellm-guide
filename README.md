@@ -11,12 +11,13 @@ LiteLLM Proxy를 AWS ECS Fargate에 배포하는 가이드입니다.
 5. [접속 정보 (URL · Admin UI · Master key)](#접속-정보-url--admin-ui--master-key) ← 배포 후 가장 먼저
 6. [모델 등록](#모델-등록)
 7. [API 호출](#api-호출)
-8. [Claude Code 연동](#claude-code-연동)
-9. [테스트](#테스트)
-10. [삭제](#삭제)
-11. [비용 검토](#비용-검토)
-12. [프로덕션 체크리스트](#프로덕션-체크리스트)
-13. [트러블슈팅](#트러블슈팅)
+8. [사용자/조직별 한도 설정](#사용자조직별-한도-설정)
+9. [Claude Code 연동](#claude-code-연동)
+10. [테스트](#테스트)
+11. [삭제](#삭제)
+12. [비용 검토](#비용-검토)
+13. [프로덕션 체크리스트](#프로덕션-체크리스트)
+14. [트러블슈팅](#트러블슈팅)
 
 ---
 
@@ -400,7 +401,208 @@ curl -X POST "$LITELLM_URL/v1/messages" \
   }'
 ```
 
-> Admin UI에서 발급한 **virtual key**를 master key 대신 쓰면 모델·예산을 제한할 수 있습니다.
+> Admin UI·API로 발급한 **virtual key**를 master key 대신 쓰면 모델·예산을 제한할 수 있습니다. → [사용자/조직별 한도 설정](#사용자조직별-한도-설정)
+
+---
+
+## 사용자/조직별 한도 설정
+
+Master key(`sk-…`)는 **관리자용**입니다. 실사용자·팀에는 **virtual key**를 나눠 주고, `max_budget` / RPM·TPM으로 사용량을 제한하세요.  
+이 스택은 RDS에 키·spend를 저장하므로(`STORE_MODEL_IN_DB=True`) Admin UI와 `/key/*` API가 바로 동작합니다.
+
+공식 문서: [Virtual Keys](https://docs.litellm.ai/docs/proxy/virtual_keys) · [Budgets, Rate Limits](https://docs.litellm.ai/docs/proxy/users)
+
+### 계층 구조
+
+한도는 **여러 레벨에 동시에** 걸 수 있습니다. 요청은 적용되는 한도 중 **하나라도** 넘으면 거부됩니다.
+
+```
+Organization (조직)     ← 회사/사업 단위 상한 (선택)
+    └── Team (팀)       ← 팀 공유 예산·모델 허용 목록
+          └── User      ← 사용자 개인 예산 (여러 키에 누적)
+                └── Virtual Key  ← 앱/환경별 키 + 키 자체 예산·RPM
+```
+
+| 레벨 | 용도 | 대표 API |
+|------|------|----------|
+| Key | 앱·개발자 1명에게 줄 토큰 | `/key/generate`, `/key/update` |
+| User | 한 사람의 키들을 합산한 한도 | `/user/new`, `/user/update` |
+| Team | 팀 공유 예산·허용 모델 | `/team/new`, `/team/update` |
+| Team member | 팀 안에서 개인 상한 | `/team/member_add` (`max_budget_in_team`) |
+
+### Virtual key 발급
+
+사전 준비: [접속 정보](#접속-정보-url--admin-ui--master-key)에서 `$LITELLM_URL` / `$LITELLM_MASTER_KEY` 를 export 해 둡니다.
+
+#### 1) Admin UI (권장)
+
+1. 브라우저에서 **Admin UI** 접속 → Username `admin` / Password = Master key
+2. **Virtual Keys** (또는 Keys) → **Create Key**
+3. 필요 시 Team / User / Models / Budget / Rate limit 지정 후 생성
+4. 표시된 `sk-…` 를 사용자에게 전달 (다시 조회되지 않을 수 있으므로 안전하게 보관)
+
+사용자는 API 호출 시 Master key 대신 이 키를 씁니다.
+
+```bash
+export LITELLM_USER_KEY="sk-...."   # 발급받은 virtual key
+curl -s "$LITELLM_URL/v1/models" -H "Authorization: Bearer $LITELLM_USER_KEY"
+```
+
+#### 2) API — 개인 키 (예산·모델 제한)
+
+```bash
+curl -s "$LITELLM_URL/key/generate" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key_alias": "alice-dev",
+    "user_id": "alice@example.com",
+    "models": ["claude-haiku-4-5", "claude-sonnet-4-6"],
+    "max_budget": 20,
+    "budget_duration": "30d",
+    "soft_budget": 15,
+    "rpm_limit": 60,
+    "tpm_limit": 100000
+  }'
+```
+
+응답의 `key` 필드가 Bearer 토큰입니다.
+
+#### 3) API — 팀 만들고 팀 키 발급
+
+```bash
+# 팀 생성 (월 $100, 허용 모델, RPM)
+TEAM=$(curl -s "$LITELLM_URL/team/new" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "team_alias": "platform-eng",
+    "max_budget": 100,
+    "budget_duration": "30d",
+    "models": ["claude-haiku-4-5", "claude-sonnet-4-6", "gpt-5.6-luna"],
+    "rpm_limit": 120
+  }')
+echo "$TEAM" | jq -r .team_id
+
+# 팀 소속 키 (팀 예산 + 키 예산 동시 적용)
+curl -s "$LITELLM_URL/key/generate" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "team_id": "<위에서 받은 team_id>",
+    "user_id": "alice@example.com",
+    "key_alias": "alice-platform",
+    "max_budget": 25,
+    "budget_duration": "30d"
+  }'
+```
+
+팀 내 개인 상한:
+
+```bash
+curl -s "$LITELLM_URL/team/member_add" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "team_id": "<team_id>",
+    "max_budget_in_team": 30,
+    "member": {"role": "user", "user_id": "alice@example.com"}
+  }'
+```
+
+#### 4) API — 사용자 예산 먼저 만들고 키 추가 발급
+
+`/user/new` 에 건 `max_budget`는 그 사용자의 **모든 키 spend 합**에 적용됩니다.
+
+```bash
+curl -s "$LITELLM_URL/user/new" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice@example.com",
+    "max_budget": 50,
+    "budget_duration": "30d",
+    "models": ["claude-haiku-4-5"]
+  }'
+
+# 같은 user_id로 키만 추가
+curl -s "$LITELLM_URL/key/generate" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "alice@example.com", "key_alias": "alice-laptop"}'
+```
+
+### Budget · Rate limit 파라미터
+
+| 파라미터 | 적용 | 동작 |
+|----------|------|------|
+| `max_budget` | key / user / team | USD 한도. 초과 시 요청 **거부** (`BudgetExceeded`) |
+| `budget_duration` | 위와 동일 | `"30d"`, `"24h"`, `"30m"` 등. 기간 끝이면 spend **리셋**. 미설정 시 누적만 |
+| `soft_budget` | key / team 등 | 알림용 임계값. **차단하지 않음** |
+| `budget_limits` | key | 여러 창 동시 예: 일 $10 + 월 $100 |
+| `model_max_budget` | key | 모델별 한도 |
+| `rpm_limit` / `tpm_limit` | key / team | 분당 요청 수 / 토큰 수 |
+| `max_parallel_requests` | key / team | 동시 요청 상한 |
+| `models` | key / user / team | 허용 `model_name` 목록 (비우면 정책에 따름) |
+| `blocked` | key | `true`면 즉시 차단 |
+| `duration` | key | 키 자체 만료 (예 `"90d"`) |
+
+일·월 이중 한도 예:
+
+```bash
+curl -s "$LITELLM_URL/key/generate" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key_alias": "alice-capped",
+    "user_id": "alice@example.com",
+    "budget_limits": [
+      {"budget_duration": "24h", "max_budget": 5},
+      {"budget_duration": "30d", "max_budget": 50}
+    ]
+  }'
+```
+
+기존 키 수정:
+
+```bash
+curl -s "$LITELLM_URL/key/update" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"key": "sk-....", "max_budget": 10, "rpm_limit": 30}'
+```
+
+### 한도 초과 시
+
+- `max_budget` / 팀·유저 예산 초과 → HTTP 오류(예산 초과). **그 키로는 더 이상 호출 불가** (기간 리셋 또는 한도 상향 전까지)
+- RPM/TPM 초과 → rate limit 오류
+- Admin UI **Usage / Spend** 또는 `/key/info`, `/user/info`, `/team/info` 로 현재 spend 확인
+
+```bash
+curl -s "$LITELLM_URL/key/info?key=$LITELLM_USER_KEY" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" | jq '{spend, max_budget, rpm_limit}'
+```
+
+### Claude Code · 클라이언트에 적용
+
+Master key 대신 virtual key를 넣으면 해당 키의 모델·예산이 적용됩니다.
+
+```bash
+export ANTHROPIC_BASE_URL="$LITELLM_URL"
+export ANTHROPIC_AUTH_TOKEN="$LITELLM_USER_KEY"   # virtual key
+```
+
+자세한 Claude Code 설정은 [Claude Code 연동](#claude-code-연동)을 보세요.
+
+### IdP(SSO)와 연동하려면 (선택 · Enterprise)
+
+OIDC JWT로 API를 인증하고, claim(`email` / `sub` 등)을 virtual key에 **매핑**하면 IdP 사용자별로 예산·사용량을 추적할 수 있습니다.  
+`auto_register` 시 첫 요청에 키가 자동 발급됩니다. JWT Auth·SCIM은 **Enterprise** 기능입니다.
+
+- [OIDC JWT Auth](https://docs.litellm.ai/docs/proxy/token_auth)
+- [JWT → Virtual Key Mapping](https://docs.litellm.ai/docs/proxy/jwt_key_mapping)
+
+현재 installer 기본 배포는 **Master key + Admin UI/API 키 발급** 경로입니다. Cognito 등 IdP는 별도 설정이 필요합니다.
 
 ---
 
