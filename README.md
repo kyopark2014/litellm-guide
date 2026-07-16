@@ -14,8 +14,9 @@ LiteLLM Proxy를 AWS ECS Fargate에 배포하는 가이드입니다.
 8. [Claude Code 연동](#claude-code-연동)
 9. [테스트](#테스트)
 10. [삭제](#삭제)
-11. [프로덕션 체크리스트](#프로덕션-체크리스트)
-12. [트러블슈팅](#트러블슈팅)
+11. [비용 검토](#비용-검토)
+12. [프로덕션 체크리스트](#프로덕션-체크리스트)
+13. [트러블슈팅](#트러블슈팅)
 
 ---
 
@@ -145,11 +146,9 @@ Security Groups:
 배포 계층:
 
 ```
-```
 install/installer.py → SG / Secrets / RDS / IAM / ALB / Task Def / ECS Service
                      → install/.state-<stack>.json  (URL·Admin UI·key, gitignored)
                      → register_models.py (Claude Bedrock + GPT if key)
-```
 ```
 
 접속 URL·키는 배포 후 [접속 정보](#접속-정보-url--admin-ui--master-key)에서 조회합니다.
@@ -178,7 +177,7 @@ export STACK=litellm
 ### 1. 클론 · 의존성
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/kyopark2014/litellm-guide.git
 cd litellm-guide
 pip install -r install/requirements.txt
 aws sts get-caller-identity   # 계정 확인
@@ -215,110 +214,38 @@ python install/installer.py deploy \
 
 배포 직후·운영 중 접속에 필요한 값은 **전부 여기서** 확인합니다.
 
-### 한 줄로 조회 (권장)
+Admin UI 로그인 화면의 *Password is your set LiteLLM Proxy MASTER_KEY* 에서 말하는 **MASTER_KEY**도 아래와 같은 값입니다 (`sk-…`).  
+Username `admin`의 비밀번호이자 API `Authorization: Bearer` 토큰으로 씁니다.
+
+### 조회 방법
+
+**1. `status` (권장)** — URL · Admin UI · Master key · Client env를 한 번에 출력하고 `install/.state-<stack>.json` 도 갱신합니다.
 
 ```bash
 python install/installer.py status --region us-west-2 --stack-name litellm
 ```
 
-출력에서 쓸 값 + **`install/.state-litellm.json` 자동 갱신**:
-
 | 출력 줄 | 어디에 쓰나 |
 |---------|-------------|
-| `URL` | API base (`LITELLM_URL`, OpenAI `base_url`, Claude Code `ANTHROPIC_BASE_URL`) |
-| `Admin UI` | 브라우저 대시보드 주소 |
-| `Master key` | Admin UI **비밀번호** + API `Authorization: Bearer …` |
-| `State file` | 로컬 캐시 경로 (`install/.state-<stack>.json`, gitignored) |
+| `URL` | API base (`LITELLM_URL`, Claude Code `ANTHROPIC_BASE_URL`) |
+| `Admin UI` | 브라우저 대시보드 (`/ui`) |
+| `Master key` | Admin UI **Password** + API Bearer |
 | `Running` | **1 이상**이어야 API/UI가 정상 |
 
-상태 파일 예시 (커밋하지 마세요):
+출력의 `Client env`를 셸에 붙여 넣으면 `$LITELLM_URL` / `$LITELLM_MASTER_KEY` 를 이후 절에서 그대로 쓸 수 있습니다.
 
-```json
-{
-  "region": "us-west-2",
-  "stack_name": "litellm",
-  "url": "http://litellm-alb-….us-west-2.elb.amazonaws.com",
-  "admin_ui": "http://litellm-alb-….us-west-2.elb.amazonaws.com/ui",
-  "master_key": "sk-...",
-  "alb_dns": "litellm-alb-….us-west-2.elb.amazonaws.com",
-  "updated_at": "2026-07-16T…"
-}
-```
-
-`jq`로 환경변수만 뽑을 때:
+**2. 로컬 state 파일** (gitignore — 커밋 금지)
 
 ```bash
 STATE=install/.state-litellm.json
+jq -r .master_key "$STATE"          # MASTER_KEY만
 export LITELLM_URL=$(jq -r .url "$STATE")
 export LITELLM_MASTER_KEY=$(jq -r .master_key "$STATE")
 export ANTHROPIC_BASE_URL="$LITELLM_URL"
 export ANTHROPIC_AUTH_TOKEN="$LITELLM_MASTER_KEY"
 ```
 
-출력 예시:
-
-```
-Service:  ACTIVE
-Desired:  1   Running: 1   Pending: 0
-ALB:      active
-URL:        http://litellm-alb-….us-west-2.elb.amazonaws.com
-Admin UI:   http://litellm-alb-….us-west-2.elb.amazonaws.com/ui
-Master key: sk-...
-Region:     us-west-2
-Stack:      litellm
-State file: …/install/.state-litellm.json
-…
-```
-
-`status`가 찍어 주는 `Client env`를 셸에 그대로 붙여 넣으면, 이후 문서의 `$LITELLM_URL` / `$LITELLM_MASTER_KEY` 를 그대로 쓸 수 있습니다.
-
-### Admin UI 로그인
-
-브라우저에서 Admin UI에 들어가면 보통 다음과 같이 안내됩니다.
-
-> Password is your set LiteLLM Proxy **MASTER_KEY**.
-
-이 **MASTER_KEY**는 installer가 Secrets Manager에 넣어 둔 `sk-…` 값이며, Username `admin`의 비밀번호이자 API Bearer 토큰과 동일합니다.
-
-| 항목 | 값 |
-|------|-----|
-| 주소 | `status`의 **Admin UI** (`http://<alb-dns>/ui`) |
-| Username | `admin` |
-| Password | **LiteLLM MASTER_KEY** (`sk-…`) — 아래 방법으로 조회 |
-
-#### MASTER_KEY 확인 방법
-
-**1. `status` (권장)**
-
-```bash
-python install/installer.py status --region us-west-2 --stack-name litellm
-```
-
-출력의 `Master key: sk-...` 줄을 그대로 Password에 입력합니다.
-
-**2. 로컬 state 파일**
-
-```bash
-jq -r .master_key install/.state-litellm.json
-```
-
-`status` / `deploy` 실행 시 갱신됩니다. git에는 올라가지 않습니다 (`.gitignore`).
-
-**3. AWS Secrets Manager**
-
-```bash
-aws secretsmanager get-secret-value \
-  --secret-id litellm/master-key \
-  --region us-west-2 \
-  --query SecretString --output text
-```
-
-스택명이 다르면 `--secret-id {stack}/master-key` 로 바꿉니다.
-
-> 기본 ALB는 **HTTP**입니다. 브라우저·터미널이 ALB DNS에 도달해야 합니다.  
-> Admin UI에서 master key를 바꿔도 Secrets Manager / `.state` 값과 자동 동기화되지 않을 수 있으니, 운영 시에는 한쪽을 기준으로 맞춰 관리하세요.
-
-### AWS CLI로만 조회
+**3. AWS CLI** (`installer.py` 없이)
 
 ```bash
 REGION=us-west-2
@@ -327,7 +254,6 @@ STACK=litellm
 ALB_DNS=$(aws elbv2 describe-load-balancers \
   --names "${STACK}-alb" --region "$REGION" \
   --query 'LoadBalancers[0].DNSName' --output text)
-
 echo "URL:      http://${ALB_DNS}"
 echo "Admin UI: http://${ALB_DNS}/ui"
 
@@ -336,12 +262,22 @@ aws secretsmanager get-secret-value \
   --query SecretString --output text
 ```
 
+### Admin UI 로그인
+
+| 항목 | 값 |
+|------|-----|
+| 주소 | 위 조회의 **Admin UI** (`http://<alb-dns>/ui`) |
+| Username | `admin` |
+| Password | 위 조회의 **Master key** (`sk-…`) |
+
+> 기본 ALB는 **HTTP**입니다. 브라우저·터미널이 ALB DNS에 도달해야 합니다.  
+> Admin UI에서 master key를 바꿔도 Secrets Manager / `.state`와 자동 동기화되지 않을 수 있으니, 운영 시에는 한쪽을 기준으로 맞추세요.
+
 ### Health 확인
 
 ECS task가 healthy가 되기까지 **1–3분** 걸릴 수 있습니다.
 
 ```bash
-# status로 URL을 export 한 뒤
 curl -s "$LITELLM_URL/health/liveliness"    # → I'm alive!
 curl -s "$LITELLM_URL/health/readiness"     # → status healthy, db connected
 ```
@@ -482,29 +418,26 @@ Claude Code  →  ANTHROPIC_BASE_URL (= LiteLLM URL)
 ### 1. 값 준비
 
 ```bash
-python install/installer.py status --region us-west-2 --stack-name litellm
-# Client env의 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 사용
-# 또는: install/.state-litellm.json
-```
+STATE=install/.state-litellm.json
+# 없거나 오래됐으면: python install/installer.py status --region us-west-2 --stack-name litellm
 
-| Claude Code 변수 | status 출력 | 예시 |
-|------------------|-------------|------|
-| `ANTHROPIC_BASE_URL` | `URL` | `http://litellm-alb-….elb.amazonaws.com` |
-| `ANTHROPIC_AUTH_TOKEN` | `Master key` | `sk-…` |
-
-모델은 먼저 [모델 등록](#모델-등록)을 해 두세요. `--model` 이름은 등록한 `model_name`과 같아야 합니다.
-
-### 2. 설정
-
-**셸 (세션용)**
-
-```bash
+export LITELLM_URL=$(jq -r .url "$STATE")
+export LITELLM_MASTER_KEY=$(jq -r .master_key "$STATE")
 export ANTHROPIC_BASE_URL="$LITELLM_URL"
 export ANTHROPIC_AUTH_TOKEN="$LITELLM_MASTER_KEY"
 # 선택: pass-through → export ANTHROPIC_BASE_URL="$LITELLM_URL/anthropic"
 ```
 
-**영구 설정 (`~/.claude/settings.json`)**
+| Claude Code 변수 | 출처 | 예시 |
+|------------------|------|------|
+| `ANTHROPIC_BASE_URL` | `.state`의 `url` | `http://litellm-alb-….elb.amazonaws.com` |
+| `ANTHROPIC_AUTH_TOKEN` | `.state`의 `master_key` | `sk-…` |
+
+모델은 먼저 [모델 등록](#모델-등록)을 해 두세요. `--model` 이름은 등록한 `model_name`과 같아야 합니다.
+
+### 2. 설정
+
+**영구 설정 (`~/.claude/settings.json`)** — 위에서 export한 뒤:
 
 ```bash
 mkdir -p ~/.claude
@@ -516,6 +449,21 @@ cat > ~/.claude/settings.json <<EOF
   }
 }
 EOF
+```
+
+입력된 결과는 아래와 같이 확인합니다.
+
+```bash
+cat ~/.claude/settings.json
+```
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://litellm-alb-….us-west-2.elb.amazonaws.com",
+    "ANTHROPIC_AUTH_TOKEN": "sk-…"
+  }
+}
 ```
 
 | OS | 경로 |
@@ -673,6 +621,61 @@ python install/uninstaller.py --region us-west-2 --stack-name litellm --yes
 RDS 삭제에 약 5분 걸릴 수 있습니다.  
 `--keep-state` 로 `install/.state-<stack>.json` 만 남길 수 있습니다.  
 Default VPC/subnet은 건드리지 않습니다. 클라이언트에서는 `ANTHROPIC_*` / `LITELLM_*` 환경변수를 제거하세요.
+
+---
+
+## 비용 검토
+
+기준: 현재 installer 기본 배포 ([resource-list.md](resource-list.md)) · **us-west-2** · 스택 `litellm` · **24/7** · desired count **1**.  
+요금은 On-Demand 대략치이며(2026년 공개 단가 기준), 리전·할인·실트래픽에 따라 달라집니다. **Bedrock/Mantle 토큰 요금은 인프라와 별도**입니다.
+
+### 현재 설치 스펙 (과금 대상)
+
+| 구성 | resource-list 기준 | 비고 |
+|------|-------------------|------|
+| ECS Fargate | 1 task · **1024 CPU (1 vCPU)** · **2048 MB** | `assignPublicIp=ENABLED` → **NAT Gateway 없음** |
+| ALB | 1 × internet-facing HTTP :80 | LCU는 트래픽에 비례 |
+| RDS | **db.t3.micro** · PostgreSQL 16 · **20 GB** · Single-AZ | 백업 7일 |
+| Secrets Manager | **2** secrets | master-key, db-password |
+| CloudWatch Logs | `/ecs/litellm*` | 보존 ~7일 |
+| IAM / SG / ECS Cluster | — | 요금 없음 |
+| Default VPC / Subnet | 기존 재사용 | 추가 VPC 비용 없음 |
+
+### 월간 인프라 추정 (USD)
+
+가정: 730시간/월. Fargate·ALB 단가는 us-east-1 공개가에 가깝게 두고, us-west-2는 유사 수준으로 봄.
+
+| 항목 | 산식 (대략) | 월 추정 |
+|------|-------------|---------|
+| **ECS Fargate** | 1 vCPU × $0.04048/h + 2 GB × $0.004445/h × 730h | **~$36** |
+| **Public IPv4** (task ENI) | $0.005/h × 730h | **~$4** |
+| **ALB** | $0.0225/h × 730h ≈ $16 + LCU (저트래픽 ~$4–8) | **~$20–25** |
+| **RDS db.t3.micro** | 인스턴스 ~$13–15 + 20 GB 스토리지 ~$2–3 | **~$15–18** |
+| **Secrets Manager** | 2 × ~$0.40 | **~$0.80** |
+| **CloudWatch Logs** | 수집·보관 소량 (수 GB) | **~$1–3** |
+| **데이터 전송** | ALB→인터넷 소량 | **~$1–5** |
+| **합계 (인프라)** | | **약 $80–95 / 월** |
+
+저트래픽 개발·데모 기준 **~$85/월** 전후가 현실적입니다.  
+resource-list의 넓은 밴드(~$70–140)와 비교하면, **NAT가 없고 task 1개**인 현재 구성은 그 밴드의 **하단~중하단**에 해당합니다.
+
+### 비용이 커지는 경우
+
+| 요인 | 영향 |
+|------|------|
+| ECS `--desired-count` / CPU·메모리 상향 | Fargate 비용 거의 선형 증가 |
+| ALB 트래픽·LCU 증가 | ALB 수~수십 달러 추가 가능 |
+| RDS 클래스 상향 / Multi-AZ | DB가 인프라 비중을 크게 키움 |
+| private subnet + **NAT Gateway** | AZ당 ~$32+/월 + GB 요금 (현재 installer는 해당 없음) |
+| **Bedrock / Mantle 추론** | 토큰·모델별 과금 — Haiku는 저렴, Sonnet/Opus/Fable·GPT Mantle은 사용량에 따라 **인프라보다 커질 수 있음** |
+
+### 절감 팁
+
+- 쓰지 않을 때 `uninstaller.py`로 스택 삭제 (RDS가 가장 비쌈)
+- 개발용은 `--desired-count 1` 유지, 로그 보존 짧게
+- 추론 비용은 LiteLLM Admin UI 사용량·저가 모델(`claude-haiku-4-5`, `gpt-5.6-luna`) 우선
+
+상세 리소스 목록·삭제 순서: [resource-list.md](resource-list.md) · [install/installer.md](install/installer.md)
 
 ---
 
