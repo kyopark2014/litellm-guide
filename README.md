@@ -1,4 +1,4 @@
-# litellm-guide
+# LiteLLM 설치 가이드 (AWS)
 
 LiteLLM Proxy를 AWS ECS Fargate에 배포하는 가이드입니다.
 
