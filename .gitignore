@@ -1,0 +1,9 @@
+# Install results (URL, Admin UI, master key) — do not commit
+install/.state-*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/

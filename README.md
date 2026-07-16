@@ -1,2 +1,707 @@
-# lite-llm-guide
-It shows how to deploy liteLLM.
+# litellm-guide
+
+LiteLLM Proxy를 AWS ECS Fargate에 배포하는 가이드입니다.
+
+## 목차
+
+1. [LiteLLM이란?](#litellm이란)
+2. [운영 아키텍처](#운영-아키텍처) — [트래픽](#1-트래픽-경계-클라이언트--alb--ecs) · [컴퓨트](#2-ecs-워크로드) · [데이터·AI](#3-데이터-플레인--ai-백엔드)
+3. [사전 요구사항](#사전-요구사항)
+4. [설치 · 배포](#설치--배포)
+5. [접속 정보 (URL · Admin UI · Master key)](#접속-정보-url--admin-ui--master-key) ← 배포 후 가장 먼저
+6. [모델 등록](#모델-등록)
+7. [API 호출](#api-호출)
+8. [Claude Code 연동](#claude-code-연동)
+9. [테스트](#테스트)
+10. [삭제](#삭제)
+11. [프로덕션 체크리스트](#프로덕션-체크리스트)
+12. [트러블슈팅](#트러블슈팅)
+
+---
+
+## LiteLLM이란?
+
+**LiteLLM**은 OpenAI, Anthropic, AWS Bedrock 등 100개 이상 LLM을 **단일 OpenAI 호환 API**로 묶어 주는 게이트웨이입니다.
+
+| 기능 | 설명 |
+|------|------|
+| 통합 API | `/v1/chat/completions`, `/v1/messages` 등으로 모든 제공자 호출 |
+| 로드 밸런싱 · 폴백 | 모델/제공자 장애 시 자동 라우팅 |
+| 비용 · 예산 · Rate limit | 키/팀 단위 사용량 추적 |
+| Virtual key | 프로바이더 키를 앱에 넣지 않고 게이트웨이 키만 배포 |
+| Admin UI | 모델·키·사용량 웹 대시보드 (`/ui`, Proxy와 **같은 ALB**) |
+
+이 레포의 `install/installer.py`가 올리는 형태는 아래와 같습니다. 상세는 [운영 아키텍처](#운영-아키텍처).
+
+```
+[클라이언트] → [ALB] → [LiteLLM Proxy (ECS)] → [Bedrock / Anthropic / …]
+                              ↓
+                        [RDS + Secrets]
+```
+
+---
+
+## 운영 아키텍처
+
+한 장에 다 넣으면 읽기 어려우므로 **트래픽 / 컴퓨트 / 데이터·AI** 세 장으로 나눕니다.  
+(llm-gateway보다 단순: ALB·서비스·DB가 각각 1개.)
+
+### 1) 트래픽 경계 (클라이언트 → ALB → ECS)
+
+```mermaid
+flowchart LR
+  CC[Claude Code]
+  App[OpenAI SDK / curl]
+  Browser[Admin UI 브라우저]
+  Test[litellm-test / load]
+
+  ALB[ALB litellm-alb]
+  Proxy[LiteLLM Proxy ECS]
+
+  CC -->|ANTHROPIC_BASE_URL| ALB
+  App -->|LITELLM_URL| ALB
+  Browser -->|/ui| ALB
+  Test -->|LITELLM_URL| ALB
+  ALB -->|HTTP :80 → :4000| Proxy
+```
+
+| 경로 | 진입점 | 비고 |
+|------|--------|------|
+| 추론 (`/v1/messages`, `/v1/chat/completions`) | **ALB → Proxy** | `LITELLM_URL` / `ANTHROPIC_BASE_URL` |
+| Admin UI | **같은 ALB** `/ui` | Username `admin`, Password = Master key |
+| Health | ALB `/health/liveliness` | Target Group health check와 동일 |
+| Master key | Secrets Manager `{stack}/master-key` | API Bearer + UI 비밀번호 |
+
+> llm-gateway처럼 gateway / admin-ui / admin-api ALB를 나누지 **않습니다**. Proxy·UI·API가 **하나의 ALB + 하나의 ECS 서비스**입니다.
+
+### 2) ECS 워크로드
+
+```mermaid
+flowchart TB
+  subgraph edge ["엣지"]
+    ALB[ALB :80]
+  end
+
+  subgraph ecs ["ECS Fargate cluster"]
+    SVC[litellm-service]
+    TASK[Task: litellm container :4000]
+    SVC --> TASK
+  end
+
+  subgraph aws ["AWS 관리형"]
+    RDS[(RDS PostgreSQL)]
+    SM[Secrets Manager]
+    CW[CloudWatch Logs]
+  end
+
+  ALB --> SVC
+  TASK -->|DATABASE_URL| RDS
+  TASK -->|LITELLM_MASTER_KEY| SM
+  TASK --> CW
+```
+
+| 리소스 | 이름 패턴 | 역할 |
+|--------|-----------|------|
+| Cluster | `{stack}-cluster` | Fargate |
+| Service | `{stack}-service` | desired count (기본 1) |
+| Task | `{stack}-task` | 이미지 `ghcr.io/berriai/litellm:main-stable` |
+| ALB / TG | `{stack}-alb` / `{stack}-tg` | HTTP 80 → 4000, health `/health/liveliness` |
+| Exec / Task Role | `{stack}-ecs-exec-role` / `-ecs-task-role` | 시크릿 주입 · (Bedrock 시) InvokeModel |
+
+### 3) 데이터 플레인 · AI 백엔드
+
+```mermaid
+flowchart LR
+  Proxy[LiteLLM Proxy]
+
+  RDS[(RDS PostgreSQL 16)]
+  SM[Secrets Manager]
+  CW[CloudWatch /ecs/stack]
+
+  Bedrock[AWS Bedrock]
+  Anthropic[Anthropic API]
+  OpenAI[OpenAI / 기타]
+
+  Proxy --> RDS
+  Proxy --> SM
+  Proxy --> CW
+  Proxy -->|등록 모델| Bedrock
+  Proxy -->|등록 모델| Anthropic
+  Proxy -->|등록 모델| OpenAI
+```
+
+| 구성 | 용도 |
+|------|------|
+| RDS | virtual key, 사용량, Admin UI에 등록한 모델 설정 (`STORE_MODEL_IN_DB=True`) |
+| Secrets | `{stack}/master-key`, `{stack}/db-password` |
+| Bedrock 등 | Admin UI / `/model/new` / `litellm-test.py --register-bedrock` 으로 등록한 뒤에만 호출 |
+
+Security Groups:
+
+```
+인터넷 ──:80──► ALB SG ──:4000──► Task SG ──:5432──► RDS SG
+```
+
+배포 계층:
+
+```
+```
+install/installer.py → SG / Secrets / RDS / IAM / ALB / Task Def / ECS Service
+                     → install/.state-<stack>.json  (URL·Admin UI·key, gitignored)
+                     → register_models.py (Claude Bedrock + GPT if key)
+```
+```
+
+접속 URL·키는 배포 후 [접속 정보](#접속-정보-url--admin-ui--master-key)에서 조회합니다.
+
+---
+
+## 사전 요구사항
+
+- AWS CLI 자격증명 (`aws configure` 또는 환경변수)
+- 대상 리전에 **default VPC** + public subnet 2개 이상
+- Python 3.10+
+- 권한: ECS, EC2, RDS, ELBv2, IAM, Secrets Manager, CloudWatch Logs
+
+이 문서 예시는 검증된 리전 **`us-west-2`**, 스택명 **`litellm`** 을 사용합니다.  
+다른 리전/이름을 쓰려면 명령의 `--region` / `--stack-name` 만 바꾸면 됩니다.
+
+```bash
+export AWS_REGION=us-west-2
+export STACK=litellm
+```
+
+---
+
+## 설치 · 배포
+
+### 1. 클론 · 의존성
+
+```bash
+git clone <this-repo>
+cd litellm-guide
+pip install -r install/requirements.txt
+aws sts get-caller-identity   # 계정 확인
+```
+
+### 2. 배포
+
+```bash
+python install/installer.py deploy --region us-west-2 --stack-name litellm
+```
+
+이미 같은 리전·스택이 있으면 **재생성하지 않고** 상태 파일만 갱신한 뒤 종료합니다.
+
+옵션 예:
+
+```bash
+python install/installer.py deploy \
+  --region us-west-2 \
+  --stack-name litellm-prod \
+  --cpu 2048 \
+  --memory 4096 \
+  --desired-count 2 \
+  --db-instance-class db.t3.small
+```
+
+약 **8–12분** 소요 (RDS 생성 구간이 가장 김).  
+완료 시 터미널에 URL·Admin UI·Master key가 출력되고, 동일 내용이 **`install/.state-<stack>.json`** 에 저장됩니다 (`.gitignore` — git에 올리지 않음).
+
+같은 값은 언제든 [접속 정보](#접속-정보-url--admin-ui--master-key)에서 다시 조회할 수 있습니다.
+
+---
+
+## 접속 정보 (URL · Admin UI · Master key)
+
+배포 직후·운영 중 접속에 필요한 값은 **전부 여기서** 확인합니다.
+
+### 한 줄로 조회 (권장)
+
+```bash
+python install/installer.py status --region us-west-2 --stack-name litellm
+```
+
+출력에서 쓸 값 + **`install/.state-litellm.json` 자동 갱신**:
+
+| 출력 줄 | 어디에 쓰나 |
+|---------|-------------|
+| `URL` | API base (`LITELLM_URL`, OpenAI `base_url`, Claude Code `ANTHROPIC_BASE_URL`) |
+| `Admin UI` | 브라우저 대시보드 주소 |
+| `Master key` | Admin UI **비밀번호** + API `Authorization: Bearer …` |
+| `State file` | 로컬 캐시 경로 (`install/.state-<stack>.json`, gitignored) |
+| `Running` | **1 이상**이어야 API/UI가 정상 |
+
+상태 파일 예시 (커밋하지 마세요):
+
+```json
+{
+  "region": "us-west-2",
+  "stack_name": "litellm",
+  "url": "http://litellm-alb-….us-west-2.elb.amazonaws.com",
+  "admin_ui": "http://litellm-alb-….us-west-2.elb.amazonaws.com/ui",
+  "master_key": "sk-...",
+  "alb_dns": "litellm-alb-….us-west-2.elb.amazonaws.com",
+  "updated_at": "2026-07-16T…"
+}
+```
+
+`jq`로 환경변수만 뽑을 때:
+
+```bash
+STATE=install/.state-litellm.json
+export LITELLM_URL=$(jq -r .url "$STATE")
+export LITELLM_MASTER_KEY=$(jq -r .master_key "$STATE")
+export ANTHROPIC_BASE_URL="$LITELLM_URL"
+export ANTHROPIC_AUTH_TOKEN="$LITELLM_MASTER_KEY"
+```
+
+출력 예시:
+
+```
+Service:  ACTIVE
+Desired:  1   Running: 1   Pending: 0
+ALB:      active
+URL:        http://litellm-alb-….us-west-2.elb.amazonaws.com
+Admin UI:   http://litellm-alb-….us-west-2.elb.amazonaws.com/ui
+Master key: sk-...
+Region:     us-west-2
+Stack:      litellm
+State file: …/install/.state-litellm.json
+…
+```
+
+`status`가 찍어 주는 `Client env`를 셸에 그대로 붙여 넣으면, 이후 문서의 `$LITELLM_URL` / `$LITELLM_MASTER_KEY` 를 그대로 쓸 수 있습니다.
+
+### Admin UI 로그인
+
+브라우저에서 Admin UI에 들어가면 보통 다음과 같이 안내됩니다.
+
+> Password is your set LiteLLM Proxy **MASTER_KEY**.
+
+이 **MASTER_KEY**는 installer가 Secrets Manager에 넣어 둔 `sk-…` 값이며, Username `admin`의 비밀번호이자 API Bearer 토큰과 동일합니다.
+
+| 항목 | 값 |
+|------|-----|
+| 주소 | `status`의 **Admin UI** (`http://<alb-dns>/ui`) |
+| Username | `admin` |
+| Password | **LiteLLM MASTER_KEY** (`sk-…`) — 아래 방법으로 조회 |
+
+#### MASTER_KEY 확인 방법
+
+**1. `status` (권장)**
+
+```bash
+python install/installer.py status --region us-west-2 --stack-name litellm
+```
+
+출력의 `Master key: sk-...` 줄을 그대로 Password에 입력합니다.
+
+**2. 로컬 state 파일**
+
+```bash
+jq -r .master_key install/.state-litellm.json
+```
+
+`status` / `deploy` 실행 시 갱신됩니다. git에는 올라가지 않습니다 (`.gitignore`).
+
+**3. AWS Secrets Manager**
+
+```bash
+aws secretsmanager get-secret-value \
+  --secret-id litellm/master-key \
+  --region us-west-2 \
+  --query SecretString --output text
+```
+
+스택명이 다르면 `--secret-id {stack}/master-key` 로 바꿉니다.
+
+> 기본 ALB는 **HTTP**입니다. 브라우저·터미널이 ALB DNS에 도달해야 합니다.  
+> Admin UI에서 master key를 바꿔도 Secrets Manager / `.state` 값과 자동 동기화되지 않을 수 있으니, 운영 시에는 한쪽을 기준으로 맞춰 관리하세요.
+
+### AWS CLI로만 조회
+
+```bash
+REGION=us-west-2
+STACK=litellm
+
+ALB_DNS=$(aws elbv2 describe-load-balancers \
+  --names "${STACK}-alb" --region "$REGION" \
+  --query 'LoadBalancers[0].DNSName' --output text)
+
+echo "URL:      http://${ALB_DNS}"
+echo "Admin UI: http://${ALB_DNS}/ui"
+
+aws secretsmanager get-secret-value \
+  --secret-id "${STACK}/master-key" --region "$REGION" \
+  --query SecretString --output text
+```
+
+### Health 확인
+
+ECS task가 healthy가 되기까지 **1–3분** 걸릴 수 있습니다.
+
+```bash
+# status로 URL을 export 한 뒤
+curl -s "$LITELLM_URL/health/liveliness"    # → I'm alive!
+curl -s "$LITELLM_URL/health/readiness"     # → status healthy, db connected
+```
+
+---
+
+## 모델 등록
+
+API·Claude Code·테스트 전에 **모델이 하나 이상** 있어야 합니다.  
+`deploy` 직후(또는 이미 배포된 스택에 `deploy`를 다시 칠 때) installer가 **기본 모델 카탈로그**를 자동 등록합니다.
+
+### 기본 등록 모델
+
+| LiteLLM `model_name` | 백엔드 | 비고 |
+|----------------------|--------|------|
+| `claude-sonnet-4-6` | Bedrock `us.anthropic.claude-sonnet-4-6` | Sonnet 4.6 |
+| `claude-opus-4-8` | Bedrock `us.anthropic.claude-opus-4-8` | Opus 4.8 |
+| `claude-sonnet-5` | Bedrock `us.anthropic.claude-sonnet-5` | Sonnet 5 |
+| `claude-fable-5` | Bedrock `us.anthropic.claude-fable-5` | Fable 5 |
+| `claude-haiku-4-5` | Bedrock Haiku 4.5 inference profile | 저비용 테스트용 |
+| `gpt-5.4` | **Bedrock Mantle** `openai.gpt-5.4` | OpenAI API 키 불필요 |
+| `gpt-5.5` | **Bedrock Mantle** `openai.gpt-5.5` | 〃 |
+| `gpt-5.6-sol` | **Bedrock Mantle** `openai.gpt-5.6-sol` | flagship |
+| `gpt-5.6-terra` | **Bedrock Mantle** `openai.gpt-5.6-terra` | balanced |
+| `gpt-5.6-luna` | **Bedrock Mantle** `openai.gpt-5.6-luna` | cost-efficient |
+
+정의 파일: `install/models.py` · 등록 스크립트: `install/register_models.py`
+
+```bash
+# 수동 재등록 (이미 있으면 skip)
+python install/register_models.py --region us-west-2 --stack-name litellm
+
+# GPT를 Mantle 경로로 강제 재등록
+python install/register_models.py --force
+```
+
+> Claude·GPT 모두 **AWS 계정 / ECS task role**로 호출합니다 (`bedrock:InvokeModel`). OpenAI `sk-` 키는 필요 없습니다.  
+> Mantle GPT는 `https://bedrock-mantle.<region>.api.aws/openai/v1` 로 라우팅됩니다. Bedrock 콘솔에서 해당 모델 액세스 허용이 필요할 수 있습니다.
+
+### 방법 A — 테스트 스크립트 (단일 Bedrock 모델)
+
+```bash
+python3 litellm-test.py \
+  --region us-west-2 \
+  --stack-name litellm \
+  --model claude-haiku-4-5 \
+  --register-bedrock
+```
+
+### 방법 B — Admin UI
+
+1. [접속 정보](#접속-정보-url--admin-ui--master-key)의 Admin UI로 로그인  
+2. Models → Add Model  
+3. 저장 후 `model_name`을 API/`--model`에 사용
+
+### 방법 C — API
+
+```bash
+# $LITELLM_URL, $LITELLM_MASTER_KEY 는 status Client env 기준
+curl -X POST "$LITELLM_URL/model/new" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_name": "claude-haiku-4-5",
+    "litellm_params": {
+      "model": "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "aws_region_name": "us-west-2"
+    }
+  }'
+```
+
+Anthropic 직접 키를 쓸 때:
+
+```bash
+curl -X POST "$LITELLM_URL/model/new" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_name": "claude-sonnet-4",
+    "litellm_params": {
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "api_key": "sk-ant-..."
+    }
+  }'
+```
+
+---
+
+## API 호출
+
+[접속 정보](#접속-정보-url--admin-ui--master-key)에서 `LITELLM_URL` / `LITELLM_MASTER_KEY`를 export한 뒤:
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url=os.environ["LITELLM_URL"],   # status의 URL
+    api_key=os.environ["LITELLM_MASTER_KEY"],
+)
+
+response = client.chat.completions.create(
+    model="claude-haiku-4-5",             # 등록한 model_name
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(response.choices[0].message.content)
+```
+
+Anthropic Messages API:
+
+```bash
+curl -X POST "$LITELLM_URL/v1/messages" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-haiku-4-5",
+    "max_tokens": 64,
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+> Admin UI에서 발급한 **virtual key**를 master key 대신 쓰면 모델·예산을 제한할 수 있습니다.
+
+---
+
+## Claude Code 연동
+
+LiteLLM을 Claude Code의 Anthropic API 대행으로 쓰는 설정입니다.
+
+```
+Claude Code  →  ANTHROPIC_BASE_URL (= LiteLLM URL)
+             →  ANTHROPIC_AUTH_TOKEN (= Master key 또는 virtual key)
+                    ↓
+              LiteLLM ALB  →  Bedrock / Anthropic / …
+```
+
+### 1. 값 준비
+
+```bash
+python install/installer.py status --region us-west-2 --stack-name litellm
+# Client env의 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 사용
+# 또는: install/.state-litellm.json
+```
+
+| Claude Code 변수 | status 출력 | 예시 |
+|------------------|-------------|------|
+| `ANTHROPIC_BASE_URL` | `URL` | `http://litellm-alb-….elb.amazonaws.com` |
+| `ANTHROPIC_AUTH_TOKEN` | `Master key` | `sk-…` |
+
+모델은 먼저 [모델 등록](#모델-등록)을 해 두세요. `--model` 이름은 등록한 `model_name`과 같아야 합니다.
+
+### 2. 설정
+
+**셸 (세션용)**
+
+```bash
+export ANTHROPIC_BASE_URL="$LITELLM_URL"
+export ANTHROPIC_AUTH_TOKEN="$LITELLM_MASTER_KEY"
+# 선택: pass-through → export ANTHROPIC_BASE_URL="$LITELLM_URL/anthropic"
+```
+
+**영구 설정 (`~/.claude/settings.json`)**
+
+```bash
+mkdir -p ~/.claude
+cat > ~/.claude/settings.json <<EOF
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "${LITELLM_URL}",
+    "ANTHROPIC_AUTH_TOKEN": "${LITELLM_MASTER_KEY}"
+  }
+}
+EOF
+```
+
+| OS | 경로 |
+|----|------|
+| macOS / Linux | `~/.claude/settings.json` |
+| Windows | `%USERPROFILE%\.claude\settings.json` |
+
+설정 변경 후 Claude Code를 **완전 종료**했다가 다시 실행합니다.
+
+### 3. 실행
+
+```bash
+claude --model claude-haiku-4-5
+# 세션 중: /model claude-haiku-4-5
+```
+
+프록시 모델 목록을 `/model` picker에 쓰려면 (Claude Code v2.1.129+):
+
+```bash
+export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
+```
+
+### 원복
+
+```bash
+unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
+# 또는 settings.json의 env에서 해당 키 삭제 후 Claude Code 재시작
+```
+
+### Claude Code 트러블슈팅
+
+| 증상 | 해결 |
+|------|------|
+| 연결 실패 | `$ANTHROPIC_BASE_URL/health/liveliness` → 200 |
+| `401` | `ANTHROPIC_AUTH_TOKEN` = master/virtual key |
+| `model not found` | [모델 등록](#모델-등록)의 `model_name`과 `/model` 일치 |
+| 설정 미반영 | Claude Code 완전 종료 후 재실행 |
+| Bedrock `400 invalid beta` | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` |
+
+참고: [LiteLLM Claude Code Quickstart](https://docs.litellm.ai/docs/tutorials/claude_responses_api)
+
+---
+
+## 테스트
+
+| 스크립트 | 용도 |
+|----------|------|
+| `litellm-test.py` | health + `/v1/messages` 스모크 |
+| `litellm-load.py` | 동시성 부하 (기본 20회) |
+
+URL·키를 안 넣어도 `--region` / `--stack-name`으로 ALB·Secrets(또는 `install/.state-*.json`)를 조회합니다.  
+직접 지정하려면 `LITELLM_URL` + `LITELLM_MASTER_KEY`를 export하세요.
+
+### 호출 경로 (Bedrock)
+
+`--register-bedrock`으로 등록한 뒤 `claude-haiku-4-5`로 테스트하면, Anthropic 공식 API가 아니라 **AWS Bedrock**이 백엔드입니다.
+
+```
+클라이언트 (litellm-test / litellm-load / Claude Code)
+        │  LITELLM_URL 또는 ANTHROPIC_BASE_URL
+        │  /v1/messages  (api=anthropic)
+        ▼
+LiteLLM ALB  (예: litellm-alb-….us-west-2.elb.amazonaws.com)
+        │  model_name = claude-haiku-4-5
+        ▼
+LiteLLM Proxy (ECS)
+        │  litellm_params.model =
+        │  bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
+        ▼
+AWS Bedrock  (us-west-2 inference profile)
+```
+
+| 구분 | 값 |
+|------|-----|
+| 클라이언트가 치는 URL | LiteLLM ALB (`status` / `.state`의 `url`) |
+| 요청에 넣는 모델명 | `claude-haiku-4-5` (LiteLLM 별칭) |
+| 실제 추론 (Claude) | Bedrock runtime / inference profile |
+| 실제 추론 (GPT) | **Bedrock Mantle** (`openai.gpt-*`) |
+| 인증 | LiteLLM master/virtual key (OpenAI `sk-` 불필요) |
+
+로그에 `api=anthropic`이 보여도 **와이어 포맷이 Anthropic Messages API**라는 뜻이지, Anthropic SaaS로 직접 가는 것은 아닙니다.
+
+### 스모크
+
+```bash
+python3 litellm-test.py \
+  --region us-west-2 \
+  --stack-name litellm \
+  --model claude-haiku-4-5 \
+  --register-bedrock
+```
+
+| 옵션 | 설명 |
+|------|------|
+| `--register-bedrock` | Bedrock 모델 등록 + IAM |
+| `--skip-messages` | health만 |
+| `--model` | 기본 `claude-haiku-4-5` |
+
+성공 시: liveliness/readiness **200**, `/v1/messages` reply `LITELLM-OK`.
+
+### 부하
+
+```bash
+python3 litellm-load.py \
+  --region us-west-2 \
+  --model claude-haiku-4-5 \
+  --count 20 \
+  --concurrency 4
+
+# OpenAI 호환 경로 (/v1/chat/completions) — 백엔드는 동일하게 Bedrock
+python3 litellm-load.py --count 50 --concurrency 5 --openai
+```
+
+### 검증 결과 (us-west-2 · Bedrock)
+
+| 항목 | 결과 |
+|------|------|
+| 백엔드 | **AWS Bedrock** (`claude-haiku-4-5` → inference profile) |
+| Health | 200, DB connected |
+| `/v1/messages` | PASS (`LITELLM-OK`) |
+| Load 20 × concurrency 4 | **20/0 OK**, ~2.86 rps, p50 ~1.33s, p95 ~1.59s |
+
+예시 출력:
+
+```
+url=http://litellm-alb-….us-west-2.elb.amazonaws.com
+model=claude-haiku-4-5  count=20  concurrency=4
+api=anthropic
+…
+=== summary ===
+  ok/fail:     20/0
+  wall time:   7.0s  (2.86 rps ok)
+  tokens:      in=340 out=180 total=520
+  latency:     p50=1.33s  p95=1.59s  max=1.59s
+```
+
+> Bedrock IAM을 막 붙인 직후 `403 InvokeModel`이 나면 수 분 대기 후 재시도하세요.
+
+---
+
+## 삭제
+
+`installer.py`로 만든 **모든** 리소스(ECS, ALB, RDS, Secrets, IAM, SG, Logs, 로컬 state)를 제거합니다.
+
+```bash
+# 미리보기
+python install/uninstaller.py --region us-west-2 --stack-name litellm --dry-run
+
+# 실제 삭제 (스택 이름 재입력 확인)
+python install/uninstaller.py --region us-west-2 --stack-name litellm --yes
+```
+
+동등한 경로: `python install/installer.py destroy …` (내부적으로 uninstaller 호출).
+
+RDS 삭제에 약 5분 걸릴 수 있습니다.  
+`--keep-state` 로 `install/.state-<stack>.json` 만 남길 수 있습니다.  
+Default VPC/subnet은 건드리지 않습니다. 클라이언트에서는 `ANTHROPIC_*` / `LITELLM_*` 환경변수를 제거하세요.
+
+---
+
+## 프로덕션 체크리스트
+
+- [ ] ACM **HTTPS(443)** + HTTP→HTTPS 리다이렉트
+- [ ] RDS **private subnet** / Multi-AZ / 백업 정책
+- [ ] ECS Auto Scaling
+- [ ] WAF, VPC endpoints, 커스텀 도메인
+- [ ] CloudWatch 알람 (task 실패, ALB 5xx, RDS CPU)
+- [ ] `config.yaml`로 모델·라우팅·폴백 사전 설정
+- [ ] Langfuse / OpenTelemetry 등 관찰가능성
+
+---
+
+## 트러블슈팅
+
+| 증상 | 확인 |
+|------|------|
+| Task 재시작 반복 | CloudWatch `/ecs/{stack}` — 대개 DB 연결·환경변수 |
+| ALB 5xx / unhealthy | task healthy까지 60–120초. `python install/installer.py status`의 Running 확인 |
+| Default VPC 없음 | `aws ec2 create-default-vpc` 또는 installer 네트워킹 확장 |
+| RDS 생성 실패 | 리전별 엔진 버전·인스턴스 클래스 (`--db-instance-class db.t3.small`). Postgres는 **16.14** 등 리전 지원 버전 사용 |
+| URL·비밀번호 분실 | `status` 재실행 또는 `install/.state-<stack>.json` (로컬, gitignored) |
+
+---
+
+## 참고 자료
+
+- LiteLLM 문서: https://docs.litellm.ai
+- LiteLLM GitHub: https://github.com/BerriAI/litellm
+- ECS Fargate: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/AWS_Fargate.html
