@@ -12,7 +12,7 @@ LiteLLM Proxy를 AWS ECS Fargate에 배포하는 가이드입니다.
 6. [모델 등록](#모델-등록)
 7. [API 호출](#api-호출)
 8. [사용자/조직별 한도 설정](#사용자조직별-한도-설정)
-9. [Claude Code 연동](#claude-code-연동)
+9. [Claude Code 연동](#claude-code-연동) — [Codex 적용](#codex-적용)
 10. [테스트](#테스트)
 11. [삭제](#삭제)
 12. [비용 검토](#비용-검토)
@@ -267,11 +267,12 @@ aws secretsmanager get-secret-value \
 
 | 항목 | 값 |
 |------|-----|
-| 주소 | 위 조회의 **Admin UI** (`http://<alb-dns>/ui`) |
+| 주소 | 위 조회의 **Admin UI** (`https://gateway.oh-my-trade.click/ui` 또는 `http://<alb-dns>/ui`) |
 | Username | `admin` |
 | Password | 위 조회의 **Master key** (`sk-…`) |
 
-> 기본 ALB는 **HTTP**입니다. 브라우저·터미널이 ALB DNS에 도달해야 합니다.  
+> **커스텀 도메인 (HTTPS):** `https://gateway.oh-my-trade.click` — DNS는 `stock` 계정 Route 53, ACM·ALB는 LiteLLM(`default`) 계정. HTTP :80은 HTTPS로 301됩니다.  
+> Claude Code Desktop / Codex는 이 HTTPS URL을 쓰면 됩니다. installer 기본은 HTTP ALB만 생성합니다.  
 > Admin UI에서 master key를 바꿔도 Secrets Manager / `.state`와 자동 동기화되지 않을 수 있으니, 운영 시에는 한쪽을 기준으로 맞추세요.
 
 ### Health 확인
@@ -608,13 +609,16 @@ OIDC JWT로 API를 인증하고, claim(`email` / `sub` 등)을 virtual key에 **
 
 ## Claude Code 연동
 
-LiteLLM을 Claude Code의 Anthropic API 대행으로 쓰는 설정입니다.
+LiteLLM을 Claude Code·Codex의 API 대행으로 쓰는 설정입니다.  
+Claude Code는 Anthropic 호환 경로, Codex는 OpenAI 호환 `/v1` + Responses API를 사용합니다 ([Codex 적용](#codex-적용)).
 
 ```
 Claude Code  →  ANTHROPIC_BASE_URL (= LiteLLM URL)
              →  ANTHROPIC_AUTH_TOKEN (= Master key 또는 virtual key)
+Codex        →  ~/.codex/config.toml base_url (= LiteLLM URL/v1)
+             →  LITELLM_API_KEY
                     ↓
-              LiteLLM ALB  →  Bedrock / Anthropic / …
+              LiteLLM ALB  →  Bedrock / Mantle / …
 ```
 
 ### 1. 값 준비
@@ -703,7 +707,9 @@ export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 
 Claude Code(특히 **Desktop** custom provider)는 `baseUrl`에 **HTTPS**를 요구합니다. 예외는 **loopback**(`http://127.0.0.1` / `http://localhost`)뿐입니다.
 
-이 가이드의 installer는 테스트용으로 ALB **HTTP :80만** 엽니다(ACM·커스텀 도메인 없음). 그래서 Desktop에 `.state`의 `http://…elb.amazonaws.com`을 그대로 넣으면 다음 오류가 납니다.
+**권장:** 커스텀 도메인 `https://gateway.oh-my-trade.click`을 Desktop `baseUrl`로 쓰면 loopback이 필요 없습니다.
+
+installer가 만든 **HTTP ALB DNS**(`http://…elb.amazonaws.com`)만 있을 때 Desktop에 넣으면 다음 오류가 납니다.
 
 ```text
 Invalid custom3p managed config: baseUrl: must use https (or http on loopback)
@@ -711,9 +717,9 @@ Invalid custom3p managed config: baseUrl: must use https (or http on loopback)
 
 | 환경 | 권장 |
 |------|------|
-| CLI (`claude`) | `ANTHROPIC_BASE_URL`에 ALB HTTP URL 직접 사용 가능 ([위 설정](#2-설정)) |
-| Desktop + HTTP ALB (테스트) | 아래 **loopback 프록시** |
-| Desktop + 프로덕션 | ACM 인증서 + 커스텀 도메인으로 ALB HTTPS |
+| Desktop + HTTPS 도메인 | `https://gateway.oh-my-trade.click` (**권장**) |
+| CLI (`claude`) | 위 HTTPS 또는 ALB URL ([위 설정](#2-설정)) |
+| Desktop + HTTP ALB만 | 아래 **loopback 프록시** |
 
 #### Loopback 프록시 실행
 
@@ -774,6 +780,142 @@ unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
 | Bedrock `400 invalid beta` | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` |
 
 참고: [LiteLLM Claude Code Quickstart](https://docs.litellm.ai/docs/tutorials/claude_responses_api)
+
+### Codex 적용
+
+[OpenAI Codex](https://chatgpt.com/codex)도 같은 LiteLLM Gateway를 **단일 엔드포인트**로 쓸 수 있습니다. Claude Code는 Anthropic Messages 경로, Codex는 OpenAI 호환 **Responses API**(`wire_api = "responses"`)로 Mantle GPT 모델에 연결합니다.  
+아키텍처·거버넌스 배경은 AWS 기술 블로그 [단일 LLM Gateway 아키텍처](https://aws.amazon.com/ko/blogs/tech/single-llm-gw-arch/)를 참고하세요.
+
+```
+Codex  →  ~/.codex/config.toml (base_url = LiteLLM /v1)
+       →  LITELLM_API_KEY (= Master key 또는 virtual key)
+              ↓
+        LiteLLM ALB  →  Bedrock Mantle (openai.gpt-*)
+```
+
+#### 1. 값 준비
+
+```bash
+STATE=install/.state-litellm.json
+# 없거나 오래됐으면: python install/installer.py status --region us-west-2 --stack-name litellm
+
+export LITELLM_URL=$(jq -r .url "$STATE")
+export LITELLM_API_KEY=$(jq -r .master_key "$STATE")
+# 예: LITELLM_URL=https://gateway.oh-my-trade.click
+```
+
+| 구분 | 어디에 넣나 | 예시 |
+|------|-------------|------|
+| Gateway URL | `config.toml`의 `base_url` | `https://domain/v1` |
+| 환경변수 **이름** | `config.toml`의 `env_key` | `"LITELLM_API_KEY"` (문자열 이름만) |
+| API 키 **값** | 셸의 `LITELLM_API_KEY` (`~/.zshrc` / `~/.bashrc`) | `sk-…` (master 또는 virtual key) |
+| 모델 | `config.toml`의 `model` | `gpt-5.5`, `gpt-5.6-sol` 등 |
+
+GPT 모델(`gpt-5.4`, `gpt-5.5`, `gpt-5.6-*`)이 등록되어 있어야 합니다. 없으면:
+
+```bash
+python install/register_models.py --region us-west-2 --stack-name litellm
+```
+
+> Codex는 OpenAI API `sk-`가 아니라 **LiteLLM 키**만 있으면 됩니다. Mantle 호출 인증은 ECS task role이 담당합니다.
+
+#### 2. 셸 환경변수 (`LITELLM_API_KEY`) — 키 값은 여기
+
+`env_key`는 키 자체가 아니라 **환경변수 이름**입니다. 실제 `sk-…` 값은 `~/.zshrc`(zsh) 또는 `~/.bashrc`(bash)에 등록합니다.
+
+레포 루트에서 한 줄로 `~/.zshrc`에 추가:
+
+```bash
+# litellm-guide 레포 루트에서 실행
+echo "export LITELLM_API_KEY=\"\$(jq -r .master_key $(pwd)/install/.state-litellm.json)\"" >> ~/.zshrc
+```
+
+bash면 `~/.bashrc`로 동일하게 추가합니다.
+
+또는 파일을 열어 직접 넣기:
+
+```bash
+# ~/.zshrc 또는 ~/.bashrc
+export LITELLM_API_KEY="$(jq -r .master_key /path/to/litellm-guide/install/.state-litellm.json)"
+# 또는 직접: export LITELLM_API_KEY="sk-…"
+```
+
+적용:
+
+```bash
+source ~/.zshrc    # bash면: source ~/.bashrc
+echo "LITELLM_API_KEY is set: ${LITELLM_API_KEY:+yes}"
+```
+
+> GUI로 Codex를 띄우면 터미널 `export`가 안 보일 수 있습니다. 그 경우 **`~/.zshrc` / `~/.bashrc`에 넣은 뒤 Codex를 완전 종료했다가 다시 실행**하거나, macOS에서는 로그인 세션에 변수가 잡히도록 한 번 로그아웃 앱을 재시작합니다.
+
+#### 3. `~/.codex/config.toml` — `env_key`에는 이름만
+
+```bash
+mkdir -p ~/.codex
+# 기존 설정이 있으면 model / model_provider / [model_providers.litellm] 만 맞추면 됩니다.
+```
+
+```toml
+model = "gpt-5.5"
+model_provider = "litellm"
+
+[model_providers.litellm]
+name = "LiteLLM Proxy"
+base_url = "https://domain.com/v1"
+env_key = "LITELLM_API_KEY"
+wire_api = "responses"
+```
+
+**주의:** `env_key`에 API 키 값(`sk-…`)을 넣지 마세요. Codex는 그 문자열을 **환경변수 이름**으로 해석합니다.
+
+| 잘못된 예 | 결과 |
+|-----------|------|
+| `env_key = "sk-abcd…"` | `Missing environment variable: sk-abcd…` |
+| `env_key = "LITELLM_API_KEY"` + 셸에 `export LITELLM_API_KEY="sk-…"` | 정상 |
+
+| 키 | 설명 |
+|----|------|
+| `model` | LiteLLM에 등록된 `model_name` (예: `gpt-5.5`, `gpt-5.6-luna`) |
+| `model_provider` | 아래 `[model_providers.*]` 블록 이름 |
+| `base_url` | Gateway의 OpenAI 호환 엔드포인트 (`…/v1`). ALB는 **443**이므로 `:4000`을 붙이지 않습니다 |
+| `env_key` | API 키를 읽을 **환경변수 이름** (`"LITELLM_API_KEY"`). 키 값 금지 |
+| `wire_api` | Codex → Mantle Responses 경로용. **`responses`** 고정 |
+
+블로그 예시의 `https://[LLM GW Endpoint]:4000/v1`은 EC2에 직접 붙는 경우입니다. 이 가이드의 ECS+ALB 배포는 `https://gateway.oh-my-trade.click/v1`처럼 **도메인(또는 ALB DNS)만** 쓰면 됩니다.
+
+확인:
+
+```bash
+grep -E 'env_key|base_url|model ' ~/.codex/config.toml
+echo "LITELLM_API_KEY is set: ${LITELLM_API_KEY:+yes}"
+curl -s -o /dev/null -w "%{http_code}\n" "$LITELLM_URL/health/liveliness"
+```
+
+#### 4. 실행
+
+Codex CLI/IDE를 재시작한 뒤, 설정한 `model`(예: `gpt-5.5`)로 요청하면 LiteLLM → Bedrock Mantle로 라우팅됩니다.
+
+다른 GPT로 바꿀 때 `config.toml`의 `model`만 바꾸면 됩니다.
+
+```toml
+model = "gpt-5.6-luna"   # 저비용
+# model = "gpt-5.6-sol"  # flagship
+```
+
+#### Codex 트러블슈팅
+
+| 증상 | 해결 |
+|------|------|
+| `Missing environment variable: sk-…` | `env_key`에 키 값을 넣은 경우. `"LITELLM_API_KEY"`로 고치고, 키는 `~/.zshrc` / `~/.bashrc`의 `export LITELLM_API_KEY=…`에 넣기 |
+| `Missing environment variable: LITELLM_API_KEY` | 셸/rc에 `export LITELLM_API_KEY` 후 `source`, Codex 재시작 |
+| 401 / auth | `LITELLM_API_KEY` 값이 master/virtual key인지 확인 |
+| model not found | [모델 등록](#모델-등록)의 `model_name`과 `config.toml`의 `model` 일치 |
+| 연결 실패 | `base_url`이 `https://…/v1` 형태인지, `/health/liveliness` → 200 |
+| Responses 오류 | `wire_api = "responses"` 유지 (chat completions 전용 설정과 혼용하지 않음) |
+| HTTP ALB만 있을 때 | Desktop/일부 클라이언트는 HTTPS 필요 → [커스텀 도메인](#admin-ui-로그인) 또는 [loopback](#claude-code-desktop에서-loopback-사용) |
+
+참고: [단일 LLM Gateway 아키텍처 (AWS 블로그)](https://aws.amazon.com/ko/blogs/tech/single-llm-gw-arch/) · [LiteLLM Claude Code Quickstart](https://docs.litellm.ai/docs/tutorials/claude_responses_api)
 
 ---
 
@@ -978,3 +1120,7 @@ resource-list의 넓은 밴드(~$70–140)와 비교하면, **NAT가 없고 task
 - LiteLLM 문서: https://docs.litellm.ai
 - LiteLLM GitHub: https://github.com/BerriAI/litellm
 - ECS Fargate: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/AWS_Fargate.html
+
+- 단일 LLM Gateway 아키텍처 : Claude Code와 Codex를 Amazon Bedrock을 통해 한 곳에서: https://aws.amazon.com/ko/blogs/tech/single-llm-gw-arch/
+
+- Amazon Bedrock 위에 사내 LLM Gateway 구축하기: Claude Code, Codex를 위한 인증·비용·거버넌스: https://aws.amazon.com/ko/blogs/tech/llmgateway-on-amazon-bedrock/
