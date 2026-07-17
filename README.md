@@ -688,6 +688,62 @@ claude --model claude-haiku-4-5
 export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 ```
 
+### Claude Code Desktop에서 Loopback 사용
+
+Claude Code(특히 **Desktop** custom provider)는 `baseUrl`에 **HTTPS**를 요구합니다. 예외는 **loopback**(`http://127.0.0.1` / `http://localhost`)뿐입니다.
+
+이 가이드의 installer는 테스트용으로 ALB **HTTP :80만** 엽니다(ACM·커스텀 도메인 없음). 그래서 Desktop에 `.state`의 `http://…elb.amazonaws.com`을 그대로 넣으면 다음 오류가 납니다.
+
+```text
+Invalid custom3p managed config: baseUrl: must use https (or http on loopback)
+```
+
+| 환경 | 권장 |
+|------|------|
+| CLI (`claude`) | `ANTHROPIC_BASE_URL`에 ALB HTTP URL 직접 사용 가능 ([위 설정](#2-설정)) |
+| Desktop + HTTP ALB (테스트) | 아래 **loopback 프록시** |
+| Desktop + 프로덕션 | ACM 인증서 + 커스텀 도메인으로 ALB HTTPS |
+
+#### 1. Loopback 프록시 실행
+
+`install/loopback.sh`가 `.state-<stack>.json`의 `url`을 읽어 `127.0.0.1`로 포워딩합니다. **프록시를 켠 채** Desktop을 사용하세요.
+
+```bash
+./install/loopback.sh
+# 포트 변경: ./install/loopback.sh --port 8080
+# upstream 직접 지정: ./install/loopback.sh -u http://litellm-alb-….elb.amazonaws.com
+```
+
+정상 기동 시:
+
+```text
+loopback: http://127.0.0.1:4000  →  http://litellm-alb-….elb.amazonaws.com
+Claude Code Desktop baseUrl: http://127.0.0.1:4000
+```
+
+다른 터미널에서 health 확인:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:4000/health/liveliness
+# 200
+```
+
+#### 2. Desktop 설정
+
+| 항목 | 값 |
+|------|-----|
+| baseUrl | `http://127.0.0.1:4000` (`--port`를 바꿨으면 그 포트) |
+| API key / Auth token | `.state`의 `master_key` 또는 virtual key |
+
+CLI를 loopback에 맞출 때도 동일합니다.
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:4000
+export ANTHROPIC_AUTH_TOKEN=$(jq -r .master_key install/.state-litellm.json)
+```
+
+> `loopback.sh`를 종료(`Ctrl+C`)하면 Desktop 연결도 끊깁니다. 장기 운영은 ALB에 HTTPS를 붙이는 편이 맞습니다([프로덕션 체크리스트](#프로덕션-체크리스트)).
+
 ### 원복
 
 ```bash
@@ -699,7 +755,8 @@ unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
 
 | 증상 | 해결 |
 |------|------|
-| 연결 실패 | `$ANTHROPIC_BASE_URL/health/liveliness` → 200 |
+| `baseUrl: must use https (or http on loopback)` | Desktop + HTTP ALB → [`loopback.sh`](#claude-code-desktop에서-loopback-사용) 사용 |
+| 연결 실패 | `$ANTHROPIC_BASE_URL/health/liveliness` → 200 (`loopback` 사용 시 `http://127.0.0.1:4000/…`) |
 | `401` | `ANTHROPIC_AUTH_TOKEN` = master/virtual key |
 | `model not found` | [모델 등록](#모델-등록)의 `model_name`과 `/model` 일치 |
 | 설정 미반영 | Claude Code 완전 종료 후 재실행 |
