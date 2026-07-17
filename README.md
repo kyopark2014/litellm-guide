@@ -688,6 +688,17 @@ claude --model claude-haiku-4-5
 export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 ```
 
+## Claude Code Desktop
+
+아래와 같이 메뉴에서 [Configure third-party inference]을 선택합니다.
+
+<img width="554" height="250" alt="image" src="https://github.com/user-attachments/assets/6b9387aa-574b-4a44-88c9-d07f608bfb42" />
+
+이후 아래와 같이 Gateway base URL과 Gateway API key을 설정합니다. Gateway base URL은 LiteLLM URL을 입력하지만, 현재 이 프로젝트는 http만 제공하므로 loopback을 이용하였습니다.
+
+<img width="741" height="567" alt="image" src="https://github.com/user-attachments/assets/fabec162-099d-4949-8c0a-e176c23febb8" />
+
+
 ### Claude Code Desktop에서 Loopback 사용
 
 Claude Code(특히 **Desktop** custom provider)는 `baseUrl`에 **HTTPS**를 요구합니다. 예외는 **loopback**(`http://127.0.0.1` / `http://localhost`)뿐입니다.
