@@ -166,9 +166,13 @@ def ensure_bedrock_iam(region: str, stack_name: str) -> None:
 
 def _with_region(spec: dict, region: str) -> dict:
     params = dict(spec["litellm_params"])
-    params["aws_region_name"] = region
-    # Keep api_base aligned with region for Mantle GPT
     model = params.get("model") or ""
+    # Pin Mantle models that already declare api_base (e.g. Sol → us-east-1)
+    if model.startswith("bedrock_mantle/") and params.get("api_base"):
+        if not params.get("aws_region_name"):
+            params["aws_region_name"] = region
+        return {**spec, "litellm_params": params}
+    params["aws_region_name"] = region
     if model.startswith("bedrock_mantle/"):
         params["api_base"] = f"https://bedrock-mantle.{region}.api.aws/openai/v1"
     return {**spec, "litellm_params": params}

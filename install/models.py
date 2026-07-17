@@ -50,52 +50,29 @@ DEFAULT_BEDROCK_MODELS: list[dict] = [
     },
 ]
 
-# GPT via Bedrock Mantle (no OpenAI API key — uses ECS task role / SigV4)
+# GPT via Bedrock Mantle (SigV4 / ECS task role — no OpenAI API key).
+# Mantle GPT is pinned to us-east-1 (broader model availability than Gateway region).
+MANTLE_GPT_REGION = "us-east-1"
+MANTLE_GPT_API_BASE = f"https://bedrock-mantle.{MANTLE_GPT_REGION}.api.aws/openai/v1"
+
 DEFAULT_MANTLE_GPT_MODELS: list[dict] = [
-    {
-        "model_name": "gpt-5.4",
-        "litellm_params": {
-            "model": "bedrock_mantle/openai.gpt-5.4",
-            "aws_region_name": "us-west-2",
-            "api_base": "https://bedrock-mantle.us-west-2.api.aws/openai/v1",
-        },
-        "model_info": {"description": "OpenAI GPT-5.4 via Bedrock Mantle"},
-    },
     {
         "model_name": "gpt-5.5",
         "litellm_params": {
             "model": "bedrock_mantle/openai.gpt-5.5",
-            "aws_region_name": "us-west-2",
-            "api_base": "https://bedrock-mantle.us-west-2.api.aws/openai/v1",
+            "aws_region_name": MANTLE_GPT_REGION,
+            "api_base": MANTLE_GPT_API_BASE,
         },
-        "model_info": {"description": "OpenAI GPT-5.5 via Bedrock Mantle"},
+        "model_info": {"description": "OpenAI GPT-5.5 via Bedrock Mantle (us-east-1) — default"},
     },
     {
-        "model_name": "gpt-5.6-sol",
+        "model_name": "gpt-5.4",
         "litellm_params": {
-            "model": "bedrock_mantle/openai.gpt-5.6-sol",
-            "aws_region_name": "us-west-2",
-            "api_base": "https://bedrock-mantle.us-west-2.api.aws/openai/v1",
+            "model": "bedrock_mantle/openai.gpt-5.4",
+            "aws_region_name": MANTLE_GPT_REGION,
+            "api_base": MANTLE_GPT_API_BASE,
         },
-        "model_info": {"description": "OpenAI GPT-5.6 Sol via Bedrock Mantle"},
-    },
-    {
-        "model_name": "gpt-5.6-terra",
-        "litellm_params": {
-            "model": "bedrock_mantle/openai.gpt-5.6-terra",
-            "aws_region_name": "us-west-2",
-            "api_base": "https://bedrock-mantle.us-west-2.api.aws/openai/v1",
-        },
-        "model_info": {"description": "OpenAI GPT-5.6 Terra via Bedrock Mantle"},
-    },
-    {
-        "model_name": "gpt-5.6-luna",
-        "litellm_params": {
-            "model": "bedrock_mantle/openai.gpt-5.6-luna",
-            "aws_region_name": "us-west-2",
-            "api_base": "https://bedrock-mantle.us-west-2.api.aws/openai/v1",
-        },
-        "model_info": {"description": "OpenAI GPT-5.6 Luna via Bedrock Mantle"},
+        "model_info": {"description": "OpenAI GPT-5.4 via Bedrock Mantle (us-east-1)"},
     },
 ]
 
