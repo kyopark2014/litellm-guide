@@ -791,6 +791,11 @@ Codex  →  ~/.codex/config.toml (base_url = LiteLLM HTTPS /v1)
         LiteLLM ALB  →  Bedrock Mantle (openai.gpt-*)
 ```
 
+LiteLLM 적용하면 아래와 같이 Model 활용량등에 대한 정보를 알수 있습니다.
+
+<img width="869" height="337" alt="image" src="https://github.com/user-attachments/assets/64540435-296c-4aad-ba06-dce4e7ae0607" />
+
+
 #### 1. 값 준비
 
 ```bash
@@ -967,6 +972,8 @@ launchctl setenv LITELLM_API_KEY "$(jq -r .master_key install/.state-litellm.jso
 
 URL·키를 안 넣어도 `--region` / `--stack-name`으로 ALB·Secrets(또는 `install/.state-*.json`)를 조회합니다.  
 직접 지정하려면 `LITELLM_URL` + `LITELLM_MASTER_KEY`를 export하세요.
+
+
 
 ### 호출 경로 (Bedrock)
 
