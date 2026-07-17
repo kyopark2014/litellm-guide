@@ -694,9 +694,11 @@ export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 
 <img width="554" height="250" alt="image" src="https://github.com/user-attachments/assets/6b9387aa-574b-4a44-88c9-d07f608bfb42" />
 
-이후 아래와 같이 Gateway base URL과 Gateway API key을 설정합니다. Gateway base URL은 LiteLLM URL을 입력하지만, 현재 이 프로젝트는 http만 제공하므로 loopback을 이용하였습니다.
+이후 아래와 같이 gateway base URL과 Gateway API key을 설정합니다. 
 
-<img width="728" height="578" alt="image" src="https://github.com/user-attachments/assets/cdf78e7d-cc48-456a-9d1b-2768b7c8ab15" />
+<img width="740" height="644" alt="image" src="https://github.com/user-attachments/assets/59a45bf3-de7f-4717-8b75-e390edc3254b" />
+
+
 
 
 ### Claude Code Desktop에서 Loopback 사용
@@ -716,6 +718,11 @@ Invalid custom3p managed config: baseUrl: must use https (or http on loopback)
 | Desktop + HTTPS 도메인 | `https://gateway.domain` (**권장**) |
 | CLI (`claude`) | 위 HTTPS 또는 ALB URL ([위 설정](#2-설정)) |
 | Desktop + HTTP ALB만 | 아래 **loopback 프록시** |
+
+Gateway base URL이 http라면, 아래처럼 loopback을 설정합니다.
+
+<img width="728" height="578" alt="image" src="https://github.com/user-attachments/assets/cdf78e7d-cc48-456a-9d1b-2768b7c8ab15" />
+
 
 #### Loopback 프록시 실행
 
@@ -789,6 +796,11 @@ Codex  →  ~/.codex/config.toml (base_url = LiteLLM HTTPS /v1)
               ↓
         LiteLLM ALB  →  Bedrock Mantle (openai.gpt-*)
 ```
+
+LiteLLM 적용하면 아래와 같이 Model 활용량등에 대한 정보를 알수 있습니다.
+
+<img width="869" height="337" alt="image" src="https://github.com/user-attachments/assets/64540435-296c-4aad-ba06-dce4e7ae0607" />
+
 
 #### 1. 값 준비
 
@@ -966,6 +978,8 @@ launchctl setenv LITELLM_API_KEY "$(jq -r .master_key install/.state-litellm.jso
 
 URL·키를 안 넣어도 `--region` / `--stack-name`으로 ALB·Secrets(또는 `install/.state-*.json`)를 조회합니다.  
 직접 지정하려면 `LITELLM_URL` + `LITELLM_MASTER_KEY`를 export하세요.
+
+
 
 ### 호출 경로 (Bedrock)
 
