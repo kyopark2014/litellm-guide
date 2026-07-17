@@ -1,6 +1,6 @@
 # LiteLLM 활용 가이드 (AWS)
 
-LiteLLM Proxy를 AWS ECS Fargate에 배포하는 가이드입니다.
+LiteLLM Proxy를 AWS ECS Fargate에 배포하고 Claude Code, Codex에서 활용하는 가이드입니다.
 
 ## 목차
 
