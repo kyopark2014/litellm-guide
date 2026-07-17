@@ -23,7 +23,7 @@ LiteLLM Proxy를 AWS ECS Fargate에 배포하는 가이드입니다.
 
 ## LiteLLM이란?
 
-**LiteLLM**은 OpenAI, Anthropic, AWS Bedrock 등 100개 이상 LLM을 **단일 OpenAI 호환 API**로 묶어 주는 게이트웨이입니다.
+**LiteLLM**은 AWS Bedrock 등 100개 이상 LLM을 **단일 OpenAI 호환 API**로 묶어 주는 게이트웨이입니다.
 
 | 기능 | 설명 |
 |------|------|
@@ -45,8 +45,7 @@ LiteLLM Proxy를 AWS ECS Fargate에 배포하는 가이드입니다.
 
 ## 운영 아키텍처
 
-한 장에 다 넣으면 읽기 어려우므로 **트래픽 / 컴퓨트 / 데이터·AI** 세 장으로 나눕니다.  
-(llm-gateway보다 단순: ALB·서비스·DB가 각각 1개.)
+**트래픽 / 컴퓨트 / 데이터·AI** 의 구조를 설명합니다.
 
 ### 1) 트래픽 경계 (클라이언트 → ALB → ECS)
 
@@ -267,11 +266,11 @@ aws secretsmanager get-secret-value \
 
 | 항목 | 값 |
 |------|-----|
-| 주소 | 위 조회의 **Admin UI** (`https://gateway.my-agentic-ai.click/ui` 또는 `http://<alb-dns>/ui`) |
+| 주소 | 위 조회의 **Admin UI** (`https://gateway.domain/ui` 또는 `http://<alb-dns>/ui`) |
 | Username | `admin` |
 | Password | 위 조회의 **Master key** (`sk-…`) |
 
-> **커스텀 도메인 (HTTPS):** `https://gateway.my-agentic-ai.click` — DNS는 `stock` 계정 Route 53, ACM·ALB는 LiteLLM(`default`) 계정. HTTP :80은 HTTPS로 301됩니다.  
+> **커스텀 도메인 (HTTPS):** `https://gateway.domain` — DNS는 `stock` 계정 Route 53, ACM·ALB는 LiteLLM(`default`) 계정. HTTP :80은 HTTPS로 301됩니다.  
 > Claude Code Desktop / Codex는 이 HTTPS URL을 쓰면 됩니다. installer 기본은 HTTP ALB만 생성합니다.  
 > Admin UI에서 master key를 바꿔도 Secrets Manager / `.state`와 자동 동기화되지 않을 수 있으니, 운영 시에는 한쪽을 기준으로 맞추세요.
 
@@ -704,7 +703,7 @@ export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 
 Claude Code(특히 **Desktop** custom provider)는 `baseUrl`에 **HTTPS**를 요구합니다. 예외는 **loopback**(`http://127.0.0.1` / `http://localhost`)뿐입니다.
 
-**권장:** 커스텀 도메인 `https://gateway.my-agentic-ai.click`을 Desktop `baseUrl`로 쓰면 loopback이 필요 없습니다.
+**권장:** 커스텀 도메인 `https://gateway.domain`을 Desktop `baseUrl`로 쓰면 loopback이 필요 없습니다.
 
 installer가 만든 **HTTP ALB DNS**(`http://…elb.amazonaws.com`)만 있을 때 Desktop에 넣으면 다음 오류가 납니다.
 
@@ -714,7 +713,7 @@ Invalid custom3p managed config: baseUrl: must use https (or http on loopback)
 
 | 환경 | 권장 |
 |------|------|
-| Desktop + HTTPS 도메인 | `https://gateway.my-agentic-ai.click` (**권장**) |
+| Desktop + HTTPS 도메인 | `https://gateway.domain` (**권장**) |
 | CLI (`claude`) | 위 HTTPS 또는 ALB URL ([위 설정](#2-설정)) |
 | Desktop + HTTP ALB만 | 아래 **loopback 프록시** |
 
@@ -799,12 +798,12 @@ STATE=install/.state-litellm.json
 
 export LITELLM_URL=$(jq -r .url "$STATE")
 export LITELLM_API_KEY=$(jq -r .master_key "$STATE")
-# 예: LITELLM_URL=https://gateway.my-agentic-ai.click
+# 예: LITELLM_URL=https://gateway.domain
 ```
 
 | 구분 | 어디에 넣나 | 예시 |
 |------|-------------|------|
-| Codex `base_url` | `config.toml` | `https://gateway.my-agentic-ai.click/v1` |
+| Codex `base_url` | `config.toml` | `https://gateway.domain/v1` |
 | 환경변수 **이름** | `config.toml`의 `env_key` | `"LITELLM_API_KEY"` |
 | API 키 **값** | `~/.zshrc`의 `LITELLM_API_KEY` | `sk-…` |
 | 모델 | `config.toml`의 `model` | **`gpt-5.5`** (기본), `gpt-5.4` |
@@ -856,7 +855,7 @@ model_provider = "litellm"
 
 [model_providers.litellm]
 name = "LiteLLM Proxy"
-base_url = "https://gateway.my-agentic-ai.click/v1"
+base_url = "https://gateway.domain/v1"
 env_key = "LITELLM_API_KEY"
 wire_api = "responses"
 ```
@@ -1108,7 +1107,7 @@ Default VPC/subnet은 건드리지 않습니다. 클라이언트에서는 `ANTHR
 | **합계 (인프라)** | | **약 $80–95 / 월** |
 
 저트래픽 개발·데모 기준 **~$85/월** 전후가 현실적입니다.  
-resource-list의 넓은 밴드(~$70–140)와 비교하면, **NAT가 없고 task 1개**인 현재 구성은 그 밴드의 **하단~중하단**에 해당합니다.
+resource-list의 넓은 밴드($70–140)와 비교하면, **NAT가 없고 task 1개**인 현재 구성은 그 밴드의 **하단~중하단**에 해당합니다.
 
 ### 비용이 커지는 경우
 
