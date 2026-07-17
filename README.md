@@ -695,9 +695,11 @@ export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 
 <img width="554" height="250" alt="image" src="https://github.com/user-attachments/assets/6b9387aa-574b-4a44-88c9-d07f608bfb42" />
 
-이후 아래와 같이 Gateway base URL과 Gateway API key을 설정합니다. Gateway base URL은 LiteLLM URL을 입력하지만, 현재 이 프로젝트는 http만 제공하므로 loopback을 이용하였습니다.
+이후 아래와 같이 gateway base URL과 Gateway API key을 설정합니다. 
 
-<img width="728" height="578" alt="image" src="https://github.com/user-attachments/assets/cdf78e7d-cc48-456a-9d1b-2768b7c8ab15" />
+<img width="740" height="644" alt="image" src="https://github.com/user-attachments/assets/59a45bf3-de7f-4717-8b75-e390edc3254b" />
+
+
 
 
 ### Claude Code Desktop에서 Loopback 사용
@@ -717,6 +719,11 @@ Invalid custom3p managed config: baseUrl: must use https (or http on loopback)
 | Desktop + HTTPS 도메인 | `https://gateway.my-agentic-ai.click` (**권장**) |
 | CLI (`claude`) | 위 HTTPS 또는 ALB URL ([위 설정](#2-설정)) |
 | Desktop + HTTP ALB만 | 아래 **loopback 프록시** |
+
+Gateway base URL이 http라면, 아래처럼 loopback을 설정합니다.
+
+<img width="728" height="578" alt="image" src="https://github.com/user-attachments/assets/cdf78e7d-cc48-456a-9d1b-2768b7c8ab15" />
+
 
 #### Loopback 프록시 실행
 
