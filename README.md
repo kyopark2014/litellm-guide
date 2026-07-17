@@ -715,7 +715,7 @@ Invalid custom3p managed config: baseUrl: must use https (or http on loopback)
 | Desktop + HTTP ALB (테스트) | 아래 **loopback 프록시** |
 | Desktop + 프로덕션 | ACM 인증서 + 커스텀 도메인으로 ALB HTTPS |
 
-#### 1. Loopback 프록시 실행
+#### Loopback 프록시 실행
 
 `install/loopback.sh`가 `.state-<stack>.json`의 `url`을 읽어 `127.0.0.1`로 포워딩합니다. **프록시를 켠 채** Desktop을 사용하세요.
 
