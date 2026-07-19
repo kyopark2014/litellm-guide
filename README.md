@@ -10,14 +10,15 @@ LiteLLM Proxy를 AWS ECS Fargate에 배포하고 Claude Code, Codex에서 활용
 4. [설치 · 배포](#설치--배포)
 5. [접속 정보 (URL · Admin UI · Master key)](#접속-정보-url--admin-ui--master-key) ← 배포 후 가장 먼저
 6. [모델 등록](#모델-등록)
-7. [API 호출](#api-호출)
-8. [사용자/조직별 한도 설정](#사용자조직별-한도-설정)
-9. [Claude Code 연동](#claude-code-연동) — [Codex 적용](#codex-적용) · [Codex 이슈](#codex-이슈-알려진-제약)
-10. [테스트](#테스트)
-11. [삭제](#삭제)
-12. [비용 검토](#비용-검토)
-13. [프로덕션 체크리스트](#프로덕션-체크리스트)
-14. [트러블슈팅](#트러블슈팅)
+7. [Multi-Account Load Balancing](#multi-account-load-balancing) ← Bedrock 쿼터 한도
+8. [API 호출](#api-호출)
+9. [사용자/조직별 한도 설정](#사용자조직별-한도-설정)
+10. [Claude Code 연동](#claude-code-연동) — [Codex 적용](#codex-적용) · [Codex 이슈](#codex-이슈-알려진-제약)
+11. [테스트](#테스트)
+12. [삭제](#삭제)
+13. [비용 검토](#비용-검토)
+14. [프로덕션 체크리스트](#프로덕션-체크리스트)
+15. [트러블슈팅](#트러블슈팅)
 
 ---
 
@@ -313,7 +314,8 @@ python install/register_models.py --force
 ```
 
 > Claude·GPT 모두 **AWS 계정 / ECS task role**로 호출합니다 (`bedrock:InvokeModel`). OpenAI `sk-` 키는 필요 없습니다.  
-> Claude는 Gateway 리전(`us-west-2`) Bedrock을 쓰고, **Mantle GPT는 `us-east-1`** (`https://bedrock-mantle.us-east-1.api.aws/openai/v1`)로 라우팅합니다. Bedrock 콘솔에서 해당 모델 액세스가 필요할 수 있습니다.
+> Claude는 Gateway 리전(`us-west-2`) Bedrock을 쓰고, **Mantle GPT는 `us-east-1`** (`https://bedrock-mantle.us-east-1.api.aws/openai/v1`)로 라우팅합니다. Bedrock 콘솔에서 해당 모델 액세스가 필요할 수 있습니다.  
+> Bedrock 쿼터(429)를 여러 AWS 계정으로 나누려면 → [Multi-Account Load Balancing](#multi-account-load-balancing).
 
 ### 방법 A — 테스트 스크립트 (단일 Bedrock 모델)
 
@@ -361,6 +363,251 @@ curl -X POST "$LITELLM_URL/model/new" \
     }
   }'
 ```
+
+---
+
+## Multi-Account Load Balancing
+
+Bedrock On-Demand 쿼터(RPM/TPM)는 **계정 · 리전 · 모델** 단위로 잡힙니다. 단일 AWS 계정만 쓰면 동시 호출이 늘 때 `ThrottlingException` / HTTP 429가 납니다.
+
+LiteLLM Router는 **같은 `model_name`에 deployment를 여러 개** 두면 이들을 model group으로 묶어 요청을 분산하고, 한 deployment가 실패(429 등)하면 다른 deployment로 재시도합니다. 보조 계정마다 Bedrock 쿼터가 있으므로, 계정 N개 ≈ 유효 한도 약 N배입니다.
+
+> 기본 배포는 [모델 등록](#모델-등록)처럼 **primary 계정 ECS task role 하나**로 호출합니다. 멀티 계정 LB는 아래 IAM + 동일 `model_name` 다중 등록이 필요합니다.  
+> 참고: [LiteLLM Router](https://docs.litellm.ai/docs/routing) · [Bedrock Invoke LB](https://docs.litellm.ai/docs/bedrock_invoke) · [Fargate 멀티 계정 사례](https://sofian-hamiti.medium.com/stop-429-errors-scale-genai-apps-with-litellm-on-aws-fargate-e623304b7c17)
+
+### 아키텍처
+
+```
+클라이언트
+    │  model=claude-sonnet-4-6  (논리 이름 하나)
+    ▼
+LiteLLM Proxy (ECS · primary 계정)
+    │  Router: simple-shuffle / least-busy
+    ├─ deployment A  →  primary task role          → Bedrock (계정 A 쿼터)
+    ├─ deployment B  →  STS AssumeRole → role B    → Bedrock (계정 B 쿼터)
+    └─ deployment C  →  STS AssumeRole → role C    → Bedrock (계정 C 쿼터)
+```
+
+클라이언트·Claude Code·Codex는 **등록된 `model_name`만** 보면 됩니다. 어느 계정으로 갔는지는 Gateway가 결정합니다.
+
+| 구성 요소 | 역할 |
+|-----------|------|
+| Primary 계정 | LiteLLM(ECS) 실행. Task role이 자기 계정 Bedrock + 보조 계정 `sts:AssumeRole` |
+| 보조 계정 | Bedrock 모델 액세스 + `bedrock-caller`(이름 자유) 역할. Trust에 primary task role ARN |
+| 동일 `model_name` | `/model/new`를 계정 수만큼 호출. `aws_role_name`만 다르게 |
+| Router | 분산·재시도·(선택) deployment별 `rpm`/`tpm` 가중치 |
+
+### 1) 보조 계정 — Bedrock 호출 역할
+
+각 보조 계정에서 역할을 만듭니다 (예: `bedrock-caller`).
+
+**Trust policy** — primary의 ECS task role만 AssumeRole 허용:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::PRIMARY_ACCOUNT_ID:role/litellm-ecs-task-role"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+`PRIMARY_ACCOUNT_ID` · `litellm-ecs-task-role`은 실제 스택 이름에 맞게 바꿉니다 (`{stack}-ecs-task-role`).
+
+**Permissions** — Bedrock 추론:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+Mantle GPT까지 보조 계정으로 돌릴 경우 primary의 `LiteLLMBedrockAccess`와 같이 `bedrock-mantle:*` 등을 보조 역할에도 추가하세요.
+
+**모델 액세스:** 보조 계정 Bedrock 콘솔에서 사용할 Claude / Mantle 모델 액세스를 켭니다. 역할만 있고 모델 미허용이면 해당 deployment는 계속 실패합니다.
+
+### 2) Primary 계정 — Task role에 AssumeRole
+
+`register_models.py` / `litellm-test.py --register-bedrock`가 붙이는 `LiteLLMBedrockAccess`는 **자기 계정** Invoke용입니다. 크로스 계정용으로 task role에 정책을 추가합니다.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeCrossAccountBedrock",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::ACCOUNT_B:role/bedrock-caller",
+        "arn:aws:iam::ACCOUNT_C:role/bedrock-caller"
+      ]
+    }
+  ]
+}
+```
+
+예: 인라인 정책 이름 `LiteLLMCrossAccountAssume`.
+
+```bash
+aws iam put-role-policy \
+  --role-name litellm-ecs-task-role \
+  --policy-name LiteLLMCrossAccountAssume \
+  --policy-document file://cross-account-assume.json
+```
+
+### 3) 동일 `model_name`으로 deployment 다중 등록
+
+이 스택은 `STORE_MODEL_IN_DB=True`이므로 **Admin UI 또는 `/model/new` API**로 등록합니다.  
+`install/models.py` + `register_models.py`는 모델당 **1회**(primary)만 등록하므로, 보조 계정 deployment는 아래처럼 **같은 `model_name`으로 추가**합니다.
+
+사전: [접속 정보](#접속-정보-url--admin-ui--master-key)에서 `$LITELLM_URL` / `$LITELLM_MASTER_KEY` export.
+
+#### Account A — primary (task role, `aws_role_name` 없음)
+
+이미 `register_models.py`로 있으면 skip. 없을 때만:
+
+```bash
+curl -X POST "$LITELLM_URL/model/new" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_name": "claude-sonnet-4-6",
+    "litellm_params": {
+      "model": "bedrock/us.anthropic.claude-sonnet-4-6",
+      "aws_region_name": "us-west-2",
+      "rpm": 5,
+      "tpm": 20000
+    },
+    "model_info": {"description": "Sonnet 4.6 · account A (task role)"}
+  }'
+```
+
+#### Account B — AssumeRole
+
+```bash
+curl -X POST "$LITELLM_URL/model/new" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_name": "claude-sonnet-4-6",
+    "litellm_params": {
+      "model": "bedrock/us.anthropic.claude-sonnet-4-6",
+      "aws_region_name": "us-west-2",
+      "aws_role_name": "arn:aws:iam::ACCOUNT_B:role/bedrock-caller",
+      "aws_session_name": "litellm-bedrock-b",
+      "rpm": 5,
+      "tpm": 20000
+    },
+    "model_info": {"description": "Sonnet 4.6 · account B"}
+  }'
+```
+
+#### Account C — 동일 패턴
+
+`aws_role_name` / `aws_session_name` / `model_info`만 계정 C로 바꿉니다.
+
+| 파라미터 | 설명 |
+|----------|------|
+| `model_name` | **모든 deployment에서 동일**해야 LB 대상이 됨 |
+| `model` | Bedrock model id (`bedrock/us.anthropic.…`) |
+| `aws_region_name` | 추론 리전 (Claude 기본 `us-west-2`) |
+| `aws_role_name` | 보조 계정 role ARN. 없으면 ECS task role(primary) |
+| `aws_session_name` | AssumeRole 세션 이름 (로그·CloudTrail 구분용) |
+| `rpm` / `tpm` | deployment 용량 힌트. 계정별 Bedrock 한도에 맞춰 설정 (가중·용량 라우팅) |
+
+Admin UI: **Models → Add Model**을 계정 수만큼 반복하고, 보조 계정에는 `aws_role_name` / `aws_session_name`을 채웁니다.
+
+### 4) Router 설정
+
+Admin UI **Router Settings** 또는 proxy `router_settings`에서:
+
+| 항목 | 권장 | 설명 |
+|------|------|------|
+| `routing_strategy` | `least-busy` 또는 `simple-shuffle` | 동시 요청 기준 분산 / 기본 shuffle (프로덕션에 흔함) |
+| `num_retries` | `2`–`3` | 429·일시 실패 시 다른 deployment로 |
+| `timeout` | `45` 등 | 호출 타임아웃(초) |
+| cooldown / allowed fails | 환경에 맞게 | 실패 deployment 잠시 제외 |
+
+config.yaml을 쓰는 배포의 예 ([litellm-aws-fargate](https://github.com/sofianhamiti/litellm-aws-fargate/blob/main/modules/container/image/litellm_config_load_balance.yaml) 패턴):
+
+```yaml
+model_list:
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: bedrock/us.anthropic.claude-sonnet-4-6
+      aws_region_name: us-west-2
+      rpm: 5
+      tpm: 20000
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: bedrock/us.anthropic.claude-sonnet-4-6
+      aws_region_name: us-west-2
+      aws_role_name: arn:aws:iam::ACCOUNT_B:role/bedrock-caller
+      aws_session_name: litellm-bedrock-b
+      rpm: 5
+      tpm: 20000
+
+router_settings:
+  routing_strategy: least-busy
+  num_retries: 3
+  timeout: 45
+```
+
+이 가이드의 ECS 스택은 DB 등록이 주 경로이므로, 보통은 **3절 API/UI 등록 + Admin UI Router**면 충분합니다.
+
+### 5) 검증
+
+```bash
+# 모델 목록에 동일 이름이 여러 deployment로 잡혔는지 Admin UI Models에서 확인
+
+# 부하 — 429가 다른 계정으로 넘어가는지
+python3 litellm-load.py --model claude-sonnet-4-6 --concurrency 20
+
+# 단일 호출 스모크
+curl -s "$LITELLM_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-6",
+    "messages": [{"role": "user", "content": "ping"}]
+  }'
+```
+
+| 확인 | 방법 |
+|------|------|
+| AssumeRole 성공 | 보조 계정 CloudTrail `AssumeRole` + `InvokeModel` |
+| 트래픽 분산 | 계정별 Bedrock 메트릭 / LiteLLM spend·요청 로그 |
+| AssumeRole 미동작 | CloudTrail에 AssumeRole 없음 → 호출이 primary에만 모임 |
+
+### 주의사항 · 트러블슈팅
+
+1. **계정마다 모델 액세스·쿼터가 필요**합니다. IAM만으로는 부족합니다.
+2. LiteLLM 일부 버전에서 `aws_role_name`이 optional params에서 빠져 AssumeRole이 안 되는 경우가 있습니다 ([Issue #25884](https://github.com/BerriAI/litellm/issues/25884)). 등록 후 **보조 계정**으로 실제 호출되는지 반드시 확인하세요.
+3. **비용·빌링**은 호출된 계정 기준입니다. 거버넌스가 필요하면 계정별 spend / CloudTrail을 나눠 보세요.
+4. **Mantle GPT** (`bedrock_mantle/openai.gpt-*`)도 동일 패턴이 가능하지만 리전·권한이 다릅니다 (`us-east-1`, Mantle IAM). Claude와 role/정책을 분리하는 것을 권장합니다.
+5. `model_name`을 계정마다 다르게 등록하면 LB가 **아니라** 서로 다른 논리 모델이 됩니다. 반드시 **같은 이름**으로 여러 번 등록하세요.
+6. Trust / `sts:AssumeRole` Resource ARN 오타, External ID 요구 시 미설정, ECS 태스크 재배포 전 정책 미반영 등이 흔한 원인입니다.
+
+### 자동화 (선택)
+
+`install/models.py`에 보조 계정 role ARN 목록을 두고, `register_models.py`가 동일 `model_name`으로 N번 `/model/new` 하며, `ensure_bedrock_iam`에 `sts:AssumeRole`을 넣도록 확장할 수 있습니다. 현재 스크립트는 primary 1회 등록만 하므로, 그전까지는 본 절의 API/UI 절차를 따릅니다.
 
 ---
 
