@@ -540,10 +540,32 @@ Admin UI **Router Settings** 또는 proxy `router_settings`에서:
 
 | 항목 | 권장 | 설명 |
 |------|------|------|
-| `routing_strategy` | `least-busy` 또는 `simple-shuffle` | 동시 요청 기준 분산 / 기본 shuffle (프로덕션에 흔함) |
+| `routing_strategy` | `simple-shuffle`(기본) 또는 `least-busy` | 아래 [Routing strategies](#routing-strategies--not-round-robin) 참고 |
 | `num_retries` | `2`–`3` | 429·일시 실패 시 다른 deployment로 |
 | `timeout` | `45` 등 | 호출 타임아웃(초) |
 | cooldown / allowed fails | 환경에 맞게 | 실패 deployment 잠시 제외 |
+
+#### Routing strategies — not round-robin
+
+멀티 계정으로 deployment를 여러 개 등록해도 **자동으로 round-robin이 되지는 않습니다.**  
+같은 `model_name`의 deployment들은 model group이 되고, **어느 계정으로 보낼지**는 `routing_strategy`가 결정합니다.
+
+공식 Proxy Router의 기본·권장 값은 **`simple-shuffle`**(가중 랜덤)입니다. `round-robin`은 공식 전략 목록에 없습니다.  
+문서: [Router - Load Balancing](https://docs.litellm.ai/docs/routing) · [Proxy Load Balancing](https://docs.litellm.ai/docs/proxy/load_balancing)
+
+| `routing_strategy` | 동작 | 언제 쓰면 좋은지 |
+|--------------------|------|------------------|
+| `simple-shuffle` (**기본·권장**) | **가중 랜덤**. `rpm`/`tpm`/`weight`가 있으면 비례 선택, 없으면 균등 랜덤 | 일반 프로덕션, 오버헤드 최소 |
+| `least-busy` | 지금 in-flight 요청이 가장 적은 deployment | 동시성 높을 때 계정 부하 균등화 |
+| `usage-based-routing` / `usage-based-routing-v2` | 현재 RPM·TPM 사용량 기준 | 쿼터를 계정별로 더 엄격히 맞출 때 |
+| `latency-based-routing` | 최근 응답 지연이 낮은 쪽 | 지연 SLA가 중요할 때 |
+| `cost-based-routing` | 비용이 낮은 deployment | 비용 최적화 (멀티 계정 쿼터 목적과는 별개) |
+
+정리:
+
+- **멀티 계정** = 여러 deployment를 하나의 논리 모델로 묶는 것 (용량·쿼터 풀)
+- **분산 방식** = `router_settings.routing_strategy` (기본은 **랜덤/가중 shuffle**, 순번 round-robin 아님)
+- 계정 쿼터를 고르게 쓰려면 deployment마다 Bedrock 한도에 맞는 `rpm`/`tpm`을 넣고 `simple-shuffle`을 쓰거나, 동시성이 크면 `least-busy`를 권장합니다.
 
 config.yaml을 쓰는 배포의 예 ([litellm-aws-fargate](https://github.com/sofianhamiti/litellm-aws-fargate/blob/main/modules/container/image/litellm_config_load_balance.yaml) 패턴):
 
@@ -565,7 +587,7 @@ model_list:
       tpm: 20000
 
 router_settings:
-  routing_strategy: least-busy
+  routing_strategy: simple-shuffle   # 기본값. 동시성 높으면 least-busy
   num_retries: 3
   timeout: 45
 ```
