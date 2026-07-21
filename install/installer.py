@@ -482,14 +482,35 @@ def register_task_definition(
     return resp["taskDefinition"]["taskDefinitionArn"]
 
 
+def ensure_ecs_service_linked_role(session) -> None:
+    """Ensure AWSServiceRoleForECS exists (required for CreateCluster)."""
+    iam = session.client("iam")
+    try:
+        iam.create_service_linked_role(AWSServiceName="ecs.amazonaws.com")
+        print("Created ECS service-linked role; waiting for IAM propagation...")
+        time.sleep(10)
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        # Role already present in this account
+        if code in ("InvalidInput", "EntityAlreadyExists"):
+            return
+        raise
+
+
 def setup_ecs(session, cfg: Config, net: dict, lb_out: dict, task_def_arn: str) -> str:
+    ensure_ecs_service_linked_role(session)
     ecs = session.client("ecs")
     cluster_name = f"{cfg.stack_name}-cluster"
-    ecs.create_cluster(
-        clusterName=cluster_name,
-        capacityProviders=["FARGATE"],
-        tags=[{"key": "Stack", "value": cfg.stack_name}],
-    )
+    try:
+        ecs.create_cluster(
+            clusterName=cluster_name,
+            capacityProviders=["FARGATE"],
+            tags=[{"key": "Stack", "value": cfg.stack_name}],
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "ClusterAlreadyExistsException":
+            raise
+        print(f"ECS cluster {cluster_name} already exists.")
 
     service_name = f"{cfg.stack_name}-service"
     existing = ecs.describe_services(cluster=cluster_name, services=[service_name])["services"]
