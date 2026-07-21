@@ -150,7 +150,8 @@ Task 기본 스펙 (`--cpu` / `--memory` / `--desired-count`로 변경 가능):
 | `PORT` | `4000` |
 | `LITELLM_MASTER_KEY` | Secrets Manager `{stack}/master-key` (secret 주입) |
 
-컨테이너 health check: `curl` → `localhost:4000/health/liveliness`.
+컨테이너 health check: `curl -f http://localhost:4000/health/liveliness`.  
+upstream `ghcr.io/berriai/litellm:main-stable`(Wolfi)에는 curl이 없으므로 `install/Dockerfile`로 curl을 설치한 뒤 ECR `{stack}:main-stable-curl`에 푸시하세요. installer는 ECR 태그가 있으면 그 이미지를 우선 사용합니다.
 
 ---
 

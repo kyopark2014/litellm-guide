@@ -7,6 +7,7 @@ All models route through AWS Bedrock:
 
 from __future__ import annotations
 
+
 DEFAULT_BEDROCK_MODELS: list[dict] = [
     {
         "model_name": "claude-sonnet-4-6",
@@ -17,12 +18,44 @@ DEFAULT_BEDROCK_MODELS: list[dict] = [
         "model_info": {"description": "Claude Sonnet 4.6 via Bedrock"},
     },
     {
+        "model_name": "claude-sonnet-4-5",
+        "litellm_params": {
+            "model": "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "aws_region_name": "us-west-2",
+        },
+        "model_info": {"description": "Claude Sonnet 4.5 via Bedrock"},
+    },
+    {
         "model_name": "claude-opus-4-8",
         "litellm_params": {
             "model": "bedrock/us.anthropic.claude-opus-4-8",
             "aws_region_name": "us-west-2",
         },
         "model_info": {"description": "Claude Opus 4.8 via Bedrock"},
+    },
+    {
+        "model_name": "claude-opus-4-7",
+        "litellm_params": {
+            "model": "bedrock/us.anthropic.claude-opus-4-7",
+            "aws_region_name": "us-west-2",
+        },
+        "model_info": {"description": "Claude Opus 4.7 via Bedrock"},
+    },
+    {
+        "model_name": "claude-opus-4-6",
+        "litellm_params": {
+            "model": "bedrock/us.anthropic.claude-opus-4-6-v1",
+            "aws_region_name": "us-west-2",
+        },
+        "model_info": {"description": "Claude Opus 4.6 via Bedrock"},
+    },
+    {
+        "model_name": "claude-opus-4-5",
+        "litellm_params": {
+            "model": "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0",
+            "aws_region_name": "us-west-2",
+        },
+        "model_info": {"description": "Claude Opus 4.5 via Bedrock"},
     },
     {
         "model_name": "claude-sonnet-5",
@@ -73,6 +106,33 @@ DEFAULT_MANTLE_GPT_MODELS: list[dict] = [
             "api_base": MANTLE_GPT_API_BASE,
         },
         "model_info": {"description": "OpenAI GPT-5.4 via Bedrock Mantle (us-east-1)"},
+    },
+    {
+        "model_name": "gpt-5.6-sol",
+        "litellm_params": {
+            "model": "bedrock_mantle/openai.gpt-5.6-sol",
+            "aws_region_name": MANTLE_GPT_REGION,
+            "api_base": MANTLE_GPT_API_BASE,
+        },
+        "model_info": {"description": "OpenAI GPT-5.6 Sol via Bedrock Mantle (us-east-1)"},
+    },
+    {
+        "model_name": "gpt-5.6-terra",
+        "litellm_params": {
+            "model": "bedrock_mantle/openai.gpt-5.6-terra",
+            "aws_region_name": MANTLE_GPT_REGION,
+            "api_base": MANTLE_GPT_API_BASE,
+        },
+        "model_info": {"description": "OpenAI GPT-5.6 Terra via Bedrock Mantle (us-east-1)"},
+    },
+    {
+        "model_name": "gpt-5.6-luna",
+        "litellm_params": {
+            "model": "bedrock_mantle/openai.gpt-5.6-luna",
+            "aws_region_name": MANTLE_GPT_REGION,
+            "api_base": MANTLE_GPT_API_BASE,
+        },
+        "model_info": {"description": "OpenAI GPT-5.6 Luna via Bedrock Mantle (us-east-1)"},
     },
 ]
 

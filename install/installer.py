@@ -34,6 +34,9 @@ from botocore.exceptions import ClientError
 
 
 LITELLM_IMAGE = "ghcr.io/berriai/litellm:main-stable"
+# Custom image with curl (Wolfi apk) for ECS container health checks.
+# Built from install/Dockerfile and pushed to ECR as litellm:main-stable-curl.
+LITELLM_IMAGE_WITH_CURL_TAG = "main-stable-curl"
 LITELLM_PORT = 4000
 DB_PORT = 5432
 DB_NAME = "litellm"
@@ -432,13 +435,34 @@ def setup_log_group(session, cfg: Config) -> str:
     return name
 
 
+def resolve_litellm_image(session, cfg: Config) -> str:
+    """Prefer ECR image with curl; fall back to upstream ghcr image."""
+    account = session.client("sts").get_caller_identity()["Account"]
+    ecr_uri = (
+        f"{account}.dkr.ecr.{cfg.region}.amazonaws.com/"
+        f"{cfg.stack_name}:{LITELLM_IMAGE_WITH_CURL_TAG}"
+    )
+    ecr = session.client("ecr")
+    try:
+        ecr.describe_images(
+            repositoryName=cfg.stack_name,
+            imageIds=[{"imageTag": LITELLM_IMAGE_WITH_CURL_TAG}],
+        )
+        print(f"  Using ECR image with curl: {ecr_uri}")
+        return ecr_uri
+    except ClientError:
+        print(f"  ECR image not found; using upstream: {LITELLM_IMAGE}")
+        return LITELLM_IMAGE
+
+
 def register_task_definition(
     session, cfg: Config, iam_out: dict, secrets_out: dict, db_url: str, log_group: str
 ) -> str:
     ecs = session.client("ecs")
+    image = resolve_litellm_image(session, cfg)
     container_def = {
         "name": "litellm",
-        "image": LITELLM_IMAGE,
+        "image": image,
         "essential": True,
         "portMappings": [{"containerPort": LITELLM_PORT, "protocol": "tcp"}],
         "environment": [
@@ -464,8 +488,8 @@ def register_task_definition(
             ],
             "interval": 30,
             "timeout": 10,
-            "retries": 3,
-            "startPeriod": 60,
+            "retries": 5,
+            "startPeriod": 120,
         },
     }
     resp = ecs.register_task_definition(
