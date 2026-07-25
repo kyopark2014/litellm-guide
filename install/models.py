@@ -66,6 +66,14 @@ DEFAULT_BEDROCK_MODELS: list[dict] = [
         "model_info": {"description": "Claude Sonnet 5 via Bedrock"},
     },
     {
+        "model_name": "claude-opus-5",
+        "litellm_params": {
+            "model": "bedrock/us.anthropic.claude-opus-5",
+            "aws_region_name": "us-west-2",
+        },
+        "model_info": {"description": "Claude Opus 5.0 via Bedrock"},
+    },
+    {
         "model_name": "claude-fable-5",
         "litellm_params": {
             "model": "bedrock/us.anthropic.claude-fable-5",

@@ -333,6 +333,7 @@ API·Claude Code·테스트 전에 **모델이 하나 이상** 있어야 합니�
 | `claude-opus-4-6` | Bedrock `us.anthropic.claude-opus-4-6-v1` | Opus 4.6 |
 | `claude-opus-4-5` | Bedrock Opus 4.5 inference profile | Opus 4.5 |
 | `claude-sonnet-5` | Bedrock `us.anthropic.claude-sonnet-5` | Sonnet 5 |
+| `claude-opus-5` | Bedrock `us.anthropic.claude-opus-5` | Opus 5.0 |
 | `claude-fable-5` | Bedrock `us.anthropic.claude-fable-5` | Fable 5 |
 | `claude-haiku-4-5` | Bedrock Haiku 4.5 inference profile | 저비용 테스트용 |
 | `gpt-5.5` | **Bedrock Mantle** `openai.gpt-5.5` | **기본** · Mantle **`us-east-1`** |
