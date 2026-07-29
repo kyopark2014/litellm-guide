@@ -38,6 +38,8 @@ LITELLM_IMAGE = "ghcr.io/berriai/litellm:main-stable"
 # Built from install/Dockerfile and pushed to ECR as litellm:main-stable-curl.
 LITELLM_IMAGE_WITH_CURL_TAG = "main-stable-curl"
 LITELLM_PORT = 4000
+# LLM streaming can idle >60s (TTFT / long generations); ALB default is 60s.
+ALB_IDLE_TIMEOUT_SECONDS = 600
 DB_PORT = 5432
 DB_NAME = "litellm"
 DB_USER = "litellm"
@@ -393,6 +395,17 @@ def setup_load_balancer(session, cfg: Config, net: dict) -> dict:
         )["LoadBalancers"][0]
     lb_arn = lb["LoadBalancerArn"]
     lb_dns = lb["DNSName"]
+
+    elbv2.modify_load_balancer_attributes(
+        LoadBalancerArn=lb_arn,
+        Attributes=[
+            {
+                "Key": "idle_timeout.timeout_seconds",
+                "Value": str(ALB_IDLE_TIMEOUT_SECONDS),
+            }
+        ],
+    )
+    print(f"  ALB idle timeout set to {ALB_IDLE_TIMEOUT_SECONDS}s")
 
     tgs = elbv2.describe_target_groups()["TargetGroups"]
     tg = next((x for x in tgs if x["TargetGroupName"] == f"{cfg.stack_name}-tg"), None)
