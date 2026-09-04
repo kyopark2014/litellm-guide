@@ -3,11 +3,13 @@
 
 Claude → Bedrock runtime profiles
 GPT   → Bedrock Mantle (openai.gpt-* ; SigV4 / task role — no OpenAI API key)
+Embeddings → Bedrock Titan / Cohere (mode=embedding)
 
 Usage:
   python install/register_models.py
   python install/register_models.py --region us-west-2 --stack-name litellm
   python install/register_models.py --force   # re-register even if name exists
+  python install/register_models.py --embeddings-only
 """
 
 from __future__ import annotations
@@ -25,8 +27,11 @@ INSTALL_DIR = Path(__file__).resolve().parent
 if str(INSTALL_DIR) not in sys.path:
     sys.path.insert(0, str(INSTALL_DIR))
 
-from models import DEFAULT_BEDROCK_MODELS, DEFAULT_MANTLE_GPT_MODELS  # noqa: E402
-
+from models import (  # noqa: E402
+    DEFAULT_BEDROCK_EMBEDDING_MODELS,
+    DEFAULT_BEDROCK_MODELS,
+    DEFAULT_MANTLE_GPT_MODELS,
+)
 
 def _http(
     method: str,
@@ -218,9 +223,11 @@ def register_default_models(
     region: str = "us-west-2",
     stack_name: str = "litellm",
     include_gpt: bool = True,
+    include_embeddings: bool = True,
+    embeddings_only: bool = False,
     force: bool = False,
 ) -> dict[str, int]:
-    """Register Claude (Bedrock) + GPT (Bedrock Mantle). Returns counts."""
+    """Register Claude (Bedrock) + GPT (Mantle) + Embeddings. Returns counts."""
     base, master = resolve_proxy(region, stack_name)
     print(f"Proxy: {base}")
     ensure_bedrock_iam(region, stack_name)
@@ -231,17 +238,33 @@ def register_default_models(
 
     counts = {"ok": 0, "skip": 0, "fail": 0}
 
-    print("\n=== Bedrock (Claude) ===")
-    for spec in DEFAULT_BEDROCK_MODELS:
-        payload = _with_region(spec, region)
-        # Claude uses inference profile api via bedrock/ — drop mantle api_base if any
-        payload["litellm_params"].pop("api_base", None)
-        counts[register_one(base, master, payload, existing, force=force, info_ids=info_ids)] += 1
-
-    if include_gpt:
-        print("\n=== Bedrock Mantle (GPT) ===")
-        for spec in DEFAULT_MANTLE_GPT_MODELS:
+    if not embeddings_only:
+        print("\n=== Bedrock (Claude) ===")
+        for spec in DEFAULT_BEDROCK_MODELS:
             payload = _with_region(spec, region)
+            # Claude uses inference profile api via bedrock/ — drop mantle api_base if any
+            payload["litellm_params"].pop("api_base", None)
+            counts[
+                register_one(base, master, payload, existing, force=force, info_ids=info_ids)
+            ] += 1
+
+        if include_gpt:
+            print("\n=== Bedrock Mantle (GPT) ===")
+            for spec in DEFAULT_MANTLE_GPT_MODELS:
+                payload = _with_region(spec, region)
+                counts[
+                    register_one(base, master, payload, existing, force=force, info_ids=info_ids)
+                ] += 1
+
+    if include_embeddings or embeddings_only:
+        print("\n=== Bedrock (Embeddings) ===")
+        for spec in DEFAULT_BEDROCK_EMBEDDING_MODELS:
+            payload = _with_region(spec, region)
+            payload["litellm_params"].pop("api_base", None)
+            # Ensure embedding mode is preserved for /v1/embeddings routing
+            info = dict(payload.get("model_info") or {})
+            info.setdefault("mode", "embedding")
+            payload["model_info"] = info
             counts[
                 register_one(base, master, payload, existing, force=force, info_ids=info_ids)
             ] += 1
@@ -252,10 +275,22 @@ def register_default_models(
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Register default LiteLLM models (Bedrock + Mantle)")
+    p = argparse.ArgumentParser(
+        description="Register default LiteLLM models (Bedrock + Mantle + Embeddings)"
+    )
     p.add_argument("--region", default=os.environ.get("AWS_REGION", "us-west-2"))
     p.add_argument("--stack-name", default="litellm")
     p.add_argument("--no-gpt", action="store_true", help="Skip GPT Mantle models")
+    p.add_argument(
+        "--no-embeddings",
+        action="store_true",
+        help="Skip Bedrock embedding models",
+    )
+    p.add_argument(
+        "--embeddings-only",
+        action="store_true",
+        help="Register only embedding models",
+    )
     p.add_argument(
         "--force",
         action="store_true",
@@ -267,6 +302,8 @@ def main(argv: list[str] | None = None) -> int:
         region=args.region,
         stack_name=args.stack_name,
         include_gpt=not args.no_gpt,
+        include_embeddings=not args.no_embeddings,
+        embeddings_only=args.embeddings_only,
         force=args.force,
     )
     return 1 if counts["fail"] else 0

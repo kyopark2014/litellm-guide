@@ -82,6 +82,14 @@ DEFAULT_BEDROCK_MODELS: list[dict] = [
         "model_info": {"description": "Claude Fable 5 via Bedrock"},
     },
     {
+        "model_name": "claude-fable-5-1",
+        "litellm_params": {
+            "model": "bedrock/us.anthropic.claude-fable-5-1",
+            "aws_region_name": "us-west-2",
+        },
+        "model_info": {"description": "Claude Fable 5.1 via Bedrock"},
+    },
+    {
         "model_name": "claude-haiku-4-5",
         "litellm_params": {
             "model": "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -146,3 +154,41 @@ DEFAULT_MANTLE_GPT_MODELS: list[dict] = [
 
 # Back-compat alias used by older register_models imports
 DEFAULT_OPENAI_MODELS = DEFAULT_MANTLE_GPT_MODELS
+
+# Embeddings via Bedrock (OpenAI-compatible /v1/embeddings on the proxy).
+# Used by Graphiti and other RAG clients — set model_info.mode = "embedding".
+DEFAULT_BEDROCK_EMBEDDING_MODELS: list[dict] = [
+    {
+        "model_name": "titan-embed-v2",
+        "litellm_params": {
+            "model": "bedrock/amazon.titan-embed-text-v2:0",
+            "aws_region_name": "us-west-2",
+        },
+        "model_info": {
+            "mode": "embedding",
+            "description": "Amazon Titan Text Embeddings V2 (dim 1024/512/256) — Graphiti default",
+        },
+    },
+    {
+        "model_name": "titan-embed-v1",
+        "litellm_params": {
+            "model": "bedrock/amazon.titan-embed-text-v1",
+            "aws_region_name": "us-west-2",
+        },
+        "model_info": {
+            "mode": "embedding",
+            "description": "Amazon Titan Text Embeddings G1 (legacy)",
+        },
+    },
+    {
+        "model_name": "cohere-embed-multilingual-v3",
+        "litellm_params": {
+            "model": "bedrock/cohere.embed-multilingual-v3",
+            "aws_region_name": "us-west-2",
+        },
+        "model_info": {
+            "mode": "embedding",
+            "description": "Cohere Embed Multilingual v3 via Bedrock (Korean-friendly)",
+        },
+    },
+]

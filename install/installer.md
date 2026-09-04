@@ -232,4 +232,4 @@ python install/uninstaller.py --region us-west-2 --stack-name litellm --yes
 
 사용 예와 접속 방법은 루트 [README.md](../README.md)의 **설치 · 배포** / **접속 정보** 절을 보세요.
 
-기본 모델 등록: `python install/register_models.py` (`install/models.py` — Claude는 Bedrock, GPT는 **Bedrock Mantle**).
+기본 모델 등록: `python install/register_models.py` (`install/models.py` — Claude는 Bedrock, GPT는 **Bedrock Mantle**, Embeddings는 **Titan/Cohere**).

@@ -335,12 +335,16 @@ API·Claude Code·테스트 전에 **모델이 하나 이상** 있어야 합니�
 | `claude-sonnet-5` | Bedrock `us.anthropic.claude-sonnet-5` | Sonnet 5 |
 | `claude-opus-5` | Bedrock `us.anthropic.claude-opus-5` | Opus 5.0 |
 | `claude-fable-5` | Bedrock `us.anthropic.claude-fable-5` | Fable 5 |
+| `claude-fable-5-1` | Bedrock `us.anthropic.claude-fable-5-1` | Fable 5.1 |
 | `claude-haiku-4-5` | Bedrock Haiku 4.5 inference profile | 저비용 테스트용 |
 | `gpt-5.5` | **Bedrock Mantle** `openai.gpt-5.5` | **기본** · Mantle **`us-east-1`** |
 | `gpt-5.4` | **Bedrock Mantle** `openai.gpt-5.4` | Mantle **`us-east-1`** |
 | `gpt-5.6-sol` | **Bedrock Mantle** `openai.gpt-5.6-sol` | Mantle **`us-east-1`** |
 | `gpt-5.6-terra` | **Bedrock Mantle** `openai.gpt-5.6-terra` | Mantle **`us-east-1`** |
 | `gpt-5.6-luna` | **Bedrock Mantle** `openai.gpt-5.6-luna` | Mantle **`us-east-1`** |
+| `titan-embed-v2` | Bedrock `amazon.titan-embed-text-v2:0` | **Embeddings** · Graphiti 기본 · dim 1024 |
+| `titan-embed-v1` | Bedrock `amazon.titan-embed-text-v1` | Embeddings (legacy) |
+| `cohere-embed-multilingual-v3` | Bedrock `cohere.embed-multilingual-v3` | Embeddings · 다국어/한국어 |
 
 정의 파일: `install/models.py` · 등록 스크립트: `install/register_models.py`
 
@@ -348,12 +352,16 @@ API·Claude Code·테스트 전에 **모델이 하나 이상** 있어야 합니�
 # 수동 재등록 (이미 있으면 skip)
 python install/register_models.py --region us-west-2 --stack-name litellm
 
+# Embedding 모델만 등록
+python install/register_models.py --embeddings-only
+
 # GPT를 Mantle 경로로 강제 재등록
 python install/register_models.py --force
 ```
 
-> Claude·GPT 모두 **AWS 계정 / ECS task role**로 호출합니다 (`bedrock:InvokeModel`). OpenAI `sk-` 키는 필요 없습니다.  
-> Claude는 Gateway 리전(`us-west-2`) Bedrock을 쓰고, **Mantle GPT는 `us-east-1`** (`https://bedrock-mantle.us-east-1.api.aws/openai/v1`)로 라우팅합니다. Bedrock 콘솔에서 해당 모델 액세스가 필요할 수 있습니다.  
+> Claude·GPT·Embeddings 모두 **AWS 계정 / ECS task role**로 호출합니다 (`bedrock:InvokeModel`). OpenAI `sk-` 키는 필요 없습니다.  
+> Claude·Embeddings는 Gateway 리전(`us-west-2`) Bedrock을 쓰고, **Mantle GPT는 `us-east-1`** (`https://bedrock-mantle.us-east-1.api.aws/openai/v1`)로 라우팅합니다. Bedrock 콘솔에서 해당 모델 액세스가 필요할 수 있습니다.  
+> Embedding은 `/v1/embeddings`로 호출합니다 (`model`: `titan-embed-v2` 등).  
 > Bedrock 쿼터(429)를 여러 AWS 계정으로 나누려면 → [Multi-Account Load Balancing](#multi-account-load-balancing).
 
 ### 방법 A — 테스트 스크립트 (단일 Bedrock 모델)
