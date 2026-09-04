@@ -143,6 +143,10 @@ def ensure_bedrock_iam(region: str, stack_name: str) -> None:
                     "bedrock:InvokeModelWithResponseStream",
                     "bedrock:GetFoundationModel",
                     "bedrock:ListFoundationModels",
+                    "bedrock:GetFoundationModelAvailability",
+                    "bedrock:ListFoundationModelAgreementOffers",
+                    "bedrock:CreateFoundationModelAgreement",
+                    "bedrock:GetFoundationModelAgreementStatus",
                 ],
                 "Resource": "*",
             },
@@ -156,6 +160,17 @@ def ensure_bedrock_iam(region: str, stack_name: str) -> None:
                 ],
                 "Resource": "*",
             },
+            {
+                # Required for first-time access to Marketplace-backed models (e.g. Fable 5.1).
+                "Sid": "MarketplaceModelAccess",
+                "Effect": "Allow",
+                "Action": [
+                    "aws-marketplace:ViewSubscriptions",
+                    "aws-marketplace:Subscribe",
+                    "aws-marketplace:Unsubscribe",
+                ],
+                "Resource": "*",
+            },
         ],
     }
     try:
@@ -164,7 +179,7 @@ def ensure_bedrock_iam(region: str, stack_name: str) -> None:
             PolicyName="LiteLLMBedrockAccess",
             PolicyDocument=json.dumps(doc),
         )
-        print(f"  IAM: Bedrock + Mantle on {role}")
+        print(f"  IAM: Bedrock + Mantle + Marketplace on {role}")
     except Exception as e:
         print(f"  IAM: skip ({e})")
 
