@@ -114,8 +114,15 @@ DEFAULT_MANTLE_GPT_MODELS: list[dict] = [
             "aws_region_name": CONVERSE_GPT_REGION,
             "drop_params": True,
         },
+        # LiteLLM model DB may not know gpt-6-astra yet; without base_model it is
+        # classified as plain "bedrock" and drop_params silently strips tools.
+        # Inherit Converse+tool support from a known OpenAI-on-Bedrock profile.
         "model_info": {
-            "description": "OpenAI GPT-6 Astra via Bedrock Converse (us.openai.gpt-6-astra, us-west-2)"
+            "description": "OpenAI GPT-6 Astra via Bedrock Converse (us.openai.gpt-6-astra, us-west-2)",
+            "mode": "chat",
+            "base_model": "bedrock/converse/us.openai.gpt-5.6-sol",
+            "supports_function_calling": True,
+            "supports_tool_choice": True,
         },
     },
     {
