@@ -337,11 +337,12 @@ API·Claude Code·테스트 전에 **모델이 하나 이상** 있어야 합니�
 | `claude-fable-5` | Bedrock `us.anthropic.claude-fable-5` | Fable 5 |
 | `claude-fable-5-1` | Bedrock `us.anthropic.claude-fable-5-1` | Fable 5.1 |
 | `claude-haiku-4-5` | Bedrock Haiku 4.5 inference profile | 저비용 테스트용 |
+| `gpt-6-astra` | **Bedrock Converse** `us.openai.gpt-6-astra` | 최상위 성능 · **`us-west-2`** |
 | `gpt-5.5` | **Bedrock Mantle** `openai.gpt-5.5` | **기본** · Mantle **`us-east-1`** |
 | `gpt-5.4` | **Bedrock Mantle** `openai.gpt-5.4` | Mantle **`us-east-1`** |
-| `gpt-5.6-sol` | **Bedrock Mantle** `openai.gpt-5.6-sol` | Mantle **`us-east-1`** |
-| `gpt-5.6-terra` | **Bedrock Mantle** `openai.gpt-5.6-terra` | Mantle **`us-east-1`** |
-| `gpt-5.6-luna` | **Bedrock Mantle** `openai.gpt-5.6-luna` | Mantle **`us-east-1`** |
+| `gpt-5.6-sol` | **Bedrock Converse** `us.openai.gpt-5.6-sol` | Converse **`us-west-2`** |
+| `gpt-5.6-terra` | **Bedrock Converse** `us.openai.gpt-5.6-terra` | Converse **`us-west-2`** |
+| `gpt-5.6-luna` | **Bedrock Converse** `us.openai.gpt-5.6-luna` | Converse **`us-west-2`** |
 | `titan-embed-v2` | Bedrock `amazon.titan-embed-text-v2:0` | **Embeddings** · Graphiti 기본 · dim 1024 |
 | `titan-embed-v1` | Bedrock `amazon.titan-embed-text-v1` | Embeddings (legacy) |
 | `cohere-embed-multilingual-v3` | Bedrock `cohere.embed-multilingual-v3` | Embeddings · 다국어/한국어 |
@@ -360,7 +361,7 @@ python install/register_models.py --force
 ```
 
 > Claude·GPT·Embeddings 모두 **AWS 계정 / ECS task role**로 호출합니다 (`bedrock:InvokeModel`). OpenAI `sk-` 키는 필요 없습니다.  
-> Claude·Embeddings는 Gateway 리전(`us-west-2`) Bedrock을 쓰고, **Mantle GPT는 `us-east-1`** (`https://bedrock-mantle.us-east-1.api.aws/openai/v1`)로 라우팅합니다. Bedrock 콘솔에서 해당 모델 액세스가 필요할 수 있습니다.  
+> Claude·Embeddings·GPT-5.6/Astra는 Gateway 리전(`us-west-2`) Bedrock Converse를 쓰고, **Mantle GPT(5.4/5.5)는 `us-east-1`** (`https://bedrock-mantle.us-east-1.api.aws/openai/v1`)로 라우팅합니다. Bedrock 콘솔에서 해당 모델 액세스가 필요할 수 있습니다.  
 > Embedding은 `/v1/embeddings`로 호출합니다 (`model`: `titan-embed-v2` 등).  
 > Bedrock 쿼터(429)를 여러 AWS 계정으로 나누려면 → [Multi-Account Load Balancing](#multi-account-load-balancing).
 
@@ -1134,9 +1135,9 @@ export LITELLM_API_KEY=$(jq -r .master_key "$STATE")
 | Codex `base_url` | `config.toml` | `https://gateway.domain/v1` |
 | 환경변수 **이름** | `config.toml`의 `env_key` | `"LITELLM_API_KEY"` |
 | API 키 **값** | `~/.zshrc`의 `LITELLM_API_KEY` | `sk-…` |
-| 모델 | `config.toml`의 `model` | **`gpt-5.5`** (기본), `gpt-5.4` |
+| 모델 | `config.toml`의 `model` | **`gpt-5.5`** (기본), `gpt-6-astra`, `gpt-5.4` |
 
-GPT 모델(`gpt-5.5`, `gpt-5.4`)이 등록되어 있어야 합니다. 없으면:
+GPT 모델(`gpt-6-astra`, `gpt-5.5`, `gpt-5.4` 등)이 등록되어 있어야 합니다. 없으면:
 
 ```bash
 python install/register_models.py --region us-west-2 --stack-name litellm
@@ -1209,6 +1210,7 @@ wire_api = "responses"
 
 ```toml
 model = "gpt-5.5"
+# model = "gpt-6-astra"
 # model = "gpt-5.4"
 ```
 
@@ -1266,7 +1268,7 @@ launchctl setenv LITELLM_API_KEY "$(jq -r .master_key install/.state-litellm.jso
 
 ##### 5. GPT 카탈로그 · 리전
 
-기본 등록 GPT는 **`gpt-5.5`(기본) / `gpt-5.4`** 이며, Mantle 리전은 Gateway(`us-west-2`)와 달리 **`us-east-1`** 로 고정합니다 (`install/models.py`의 `MANTLE_GPT_REGION`).
+기본 등록 GPT는 **`gpt-6-astra` / `gpt-5.5`(기본) / `gpt-5.4` / `gpt-5.6-*`** 입니다. Mantle(5.4/5.5)은 **`us-east-1`**, Converse(5.6/Astra)는 **`us-west-2`** 입니다 (`install/models.py`).
 
 #### Codex 트러블슈팅
 

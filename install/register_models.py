@@ -192,9 +192,11 @@ def _with_region(spec: dict, region: str) -> dict:
         if not params.get("aws_region_name"):
             params["aws_region_name"] = region
         return {**spec, "litellm_params": params}
-    params["aws_region_name"] = region
+    # Keep catalog-pinned regions (e.g. GPT-6 Astra → us-east-1)
+    if not params.get("aws_region_name"):
+        params["aws_region_name"] = region
     if model.startswith("bedrock_mantle/"):
-        params["api_base"] = f"https://bedrock-mantle.{region}.api.aws/openai/v1"
+        params["api_base"] = f"https://bedrock-mantle.{params['aws_region_name']}.api.aws/openai/v1"
     return {**spec, "litellm_params": params}
 
 
