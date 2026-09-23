@@ -74,6 +74,21 @@ def resolve_proxy(region: str, stack_name: str) -> tuple[str, str]:
         url = url or (data.get("url") or "").rstrip("/")
         key = key or data.get("master_key") or ""
         region = data.get("region") or region
+        # Prefer HTTPS custom domain when state still has raw ALB HTTP URL.
+        custom = (data.get("custom_domain") or data.get("public_url") or "").rstrip("/")
+        if custom:
+            url = custom
+        elif url.startswith("http://") and "elb.amazonaws.com" in url:
+            # ALB :80 → :443 redirect; ACM cert is for the custom domain, not ALB DNS.
+            raise SystemExit(
+                "Proxy URL is raw ALB HTTP DNS, which redirects to HTTPS and fails "
+                "SSL hostname verification (cert is for the custom domain).\n"
+                f"  current: {url}\n"
+                "Fix: export LITELLM_URL=https://<custom-domain> "
+                "(e.g. https://gateway.my-agentic-ai.click)\n"
+                "  or set \"url\" / \"custom_domain\" in "
+                f"{state.name} to the HTTPS custom domain."
+            )
 
     if not url or not key:
         import boto3
@@ -83,7 +98,14 @@ def resolve_proxy(region: str, stack_name: str) -> tuple[str, str]:
             lb = session.client("elbv2").describe_load_balancers(
                 Names=[f"{stack_name}-alb"]
             )["LoadBalancers"][0]
-            url = f"http://{lb['DNSName']}"
+            raise SystemExit(
+                "No LITELLM_URL / state url. ALB DNS alone cannot be used after HTTPS "
+                "is enabled (certificate hostname mismatch).\n"
+                f"  alb: {lb['DNSName']}\n"
+                "Set LITELLM_URL=https://<custom-domain> and LITELLM_MASTER_KEY, "
+                "or put them in "
+                f"{INSTALL_DIR / f'.state-{stack_name}.json'}."
+            )
         if not key:
             key = session.client("secretsmanager").get_secret_value(
                 SecretId=f"{stack_name}/master-key"

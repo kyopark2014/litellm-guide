@@ -334,10 +334,13 @@ API·Claude Code·테스트 전에 **모델이 하나 이상** 있어야 합니�
 | `claude-opus-4-5` | Bedrock Opus 4.5 inference profile | Opus 4.5 |
 | `claude-sonnet-5` | Bedrock `us.anthropic.claude-sonnet-5` | Sonnet 5 |
 | `claude-opus-5` | Bedrock `us.anthropic.claude-opus-5` | Opus 5.0 |
+| `claude-opus-5-5` | Bedrock `us.anthropic.claude-opus-5-5` | Opus 5.5 |
 | `claude-fable-5` | Bedrock `us.anthropic.claude-fable-5` | Fable 5 |
 | `claude-fable-5-1` | Bedrock `us.anthropic.claude-fable-5-1` | Fable 5.1 |
 | `claude-haiku-4-5` | Bedrock Haiku 4.5 inference profile | 저비용 테스트용 |
 | `gpt-6-astra` | **Bedrock Converse** `us.openai.gpt-6-astra` | 최상위 성능 · **`us-west-2`** |
+| `gpt-6-sol` | **Bedrock Converse** `us.openai.gpt-6-sol` | Converse **`us-west-2`** |
+| `gpt-6-luna` | **Bedrock Converse** `us.openai.gpt-6-luna` | Converse **`us-west-2`** |
 | `gpt-5.5` | **Bedrock Mantle** `openai.gpt-5.5` | **기본** · Mantle **`us-east-1`** |
 | `gpt-5.4` | **Bedrock Mantle** `openai.gpt-5.4` | Mantle **`us-east-1`** |
 | `gpt-5.6-sol` | **Bedrock Converse** `us.openai.gpt-5.6-sol` | Converse **`us-west-2`** |
@@ -1268,7 +1271,7 @@ launchctl setenv LITELLM_API_KEY "$(jq -r .master_key install/.state-litellm.jso
 
 ##### 5. GPT 카탈로그 · 리전
 
-기본 등록 GPT는 **`gpt-6-astra` / `gpt-5.5`(기본) / `gpt-5.4` / `gpt-5.6-*`** 입니다. Mantle(5.4/5.5)은 **`us-east-1`**, Converse(5.6/Astra)는 **`us-west-2`** 입니다 (`install/models.py`).
+기본 등록 GPT는 **`gpt-6-astra` / `gpt-6-sol` / `gpt-6-luna` / `gpt-5.5`(기본) / `gpt-5.4` / `gpt-5.6-*`** 입니다. Mantle(5.4/5.5)은 **`us-east-1`**, Converse(5.6/GPT-6)는 **`us-west-2`** 입니다 (`install/models.py`).
 
 #### Codex 트러블슈팅
 
