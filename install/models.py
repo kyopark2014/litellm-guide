@@ -117,7 +117,7 @@ DEFAULT_BEDROCK_MODELS: list[dict] = [
 
 # GPT via Bedrock Mantle (SigV4 / ECS task role — no OpenAI API key).
 # Mantle GPT (5.4/5.5) is pinned to us-east-1.
-# GPT-5.6 + GPT-6 (Astra/Sol/Luna) use Bedrock Converse + US inference profiles (not Mantle).
+# GPT-5.6 + GPT-6 / 6.1 (Astra/Sol/Luna) use Bedrock Converse + US inference profiles (not Mantle).
 MANTLE_GPT_REGION = "us-east-1"
 MANTLE_GPT_API_BASE = f"https://bedrock-mantle.{MANTLE_GPT_REGION}.api.aws/openai/v1"
 CONVERSE_GPT_REGION = "us-west-2"
@@ -135,6 +135,21 @@ DEFAULT_MANTLE_GPT_MODELS: list[dict] = [
         # Inherit Converse+tool support from a known OpenAI-on-Bedrock profile.
         "model_info": {
             "description": "OpenAI GPT-6 Astra via Bedrock Converse (us.openai.gpt-6-astra, us-west-2)",
+            "mode": "chat",
+            "base_model": "bedrock/converse/us.openai.gpt-5.6-sol",
+            "supports_function_calling": True,
+            "supports_tool_choice": True,
+        },
+    },
+    {
+        "model_name": "gpt-6.1-sol",
+        "litellm_params": {
+            "model": "bedrock/converse/us.openai.gpt-6.1-sol",
+            "aws_region_name": CONVERSE_GPT_REGION,
+            "drop_params": True,
+        },
+        "model_info": {
+            "description": "OpenAI GPT-6.1 Sol via Bedrock Converse (us.openai.gpt-6.1-sol, us-west-2)",
             "mode": "chat",
             "base_model": "bedrock/converse/us.openai.gpt-5.6-sol",
             "supports_function_calling": True,
