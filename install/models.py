@@ -124,6 +124,36 @@ CONVERSE_GPT_REGION = "us-west-2"
 
 DEFAULT_MANTLE_GPT_MODELS: list[dict] = [
     {
+        "model_name": "gpt-6.2-astra",
+        "litellm_params": {
+            "model": "bedrock/converse/us.openai.gpt-6.2-astra",
+            "aws_region_name": CONVERSE_GPT_REGION,
+            "drop_params": True,
+        },
+        "model_info": {
+            "description": "OpenAI GPT-6.2 Astra via Bedrock Converse (us.openai.gpt-6.2-astra, us-west-2)",
+            "mode": "chat",
+            "base_model": "bedrock/converse/us.openai.gpt-5.6-sol",
+            "supports_function_calling": True,
+            "supports_tool_choice": True,
+        },
+    },
+    {
+        "model_name": "gpt-6.2-sol",
+        "litellm_params": {
+            "model": "bedrock/converse/us.openai.gpt-6.2-sol",
+            "aws_region_name": CONVERSE_GPT_REGION,
+            "drop_params": True,
+        },
+        "model_info": {
+            "description": "OpenAI GPT-6.2 Sol via Bedrock Converse (us.openai.gpt-6.2-sol, us-west-2)",
+            "mode": "chat",
+            "base_model": "bedrock/converse/us.openai.gpt-5.6-sol",
+            "supports_function_calling": True,
+            "supports_tool_choice": True,
+        },
+    },
+    {
         "model_name": "gpt-6-astra",
         "litellm_params": {
             "model": "bedrock/converse/us.openai.gpt-6-astra",
